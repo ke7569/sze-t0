@@ -17,3 +17,6 @@ logs/
 secrets/
 *.secret
 *.password
+
+runtime_so/
+artifacts/
