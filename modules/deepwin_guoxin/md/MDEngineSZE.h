@@ -80,7 +80,7 @@ private:
         std::string journal_prefix = "sze";
         std::uint64_t journal_segment_bytes = 1ULL << 30U;
         std::uint32_t journal_max_payload_bytes = 256;
-        std::uint64_t journal_min_free_bytes_after_allocate = 20ULL << 30U;
+        std::uint64_t journal_min_free_bytes_after_allocate = 80ULL << 30U;
         int flush_interval_ms = 100;
         int flush_cpu = -1;
         std::string shm_path;
