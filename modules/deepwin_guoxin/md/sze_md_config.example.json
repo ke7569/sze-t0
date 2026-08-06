@@ -10,7 +10,7 @@
     "journal_prefix": "000001",
     "journal_segment_mb": 1024,
     "journal_max_payload_bytes": 128,
-    "journal_min_free_gb_after_allocate": 20,
+    "journal_min_free_gb_after_allocate": 80,
     "flush_interval_ms": 100,
     "flush_cpu": 6,
     "shm_path": "/dev/shm/sze_000001_20260722.events",

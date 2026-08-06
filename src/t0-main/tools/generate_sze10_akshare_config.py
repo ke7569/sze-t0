@@ -243,7 +243,7 @@ def main():
                 "enabled": True, "backend": "socket", "trading_day": int(args.target_date),
                 "journal_directory": journal_directory, "journal_prefix": args.name,
                 "journal_segment_mb": 1024, "journal_max_payload_bytes": 128,
-                "journal_min_free_gb_after_allocate": 200, "flush_interval_ms": 100,
+                "journal_min_free_gb_after_allocate": 80, "flush_interval_ms": 100,
                 "flush_cpu": 6, "shm_path": shm_path, "shm_capacity": 1048576,
                 "shm_max_payload_bytes": 128, "replace_stale_shm": True,
                 "unlink_shm_on_clean_shutdown": False,
