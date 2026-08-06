@@ -85,6 +85,43 @@ ZStrategy::ZStrategy(const std::string &InstrumentID,
         }
     }
 
+    if (config.find("sze_test_order") != config.end() &&
+        config["sze_test_order"].is_object()) {
+        const json& test = config["sze_test_order"];
+        if (test.find("enabled") != test.end() && test["enabled"].is_boolean()) {
+            test_order_.enabled = test["enabled"].get<bool>();
+        }
+        if (test.find("instrument") != test.end() && test["instrument"].is_string()) {
+            test_order_.instrument = test["instrument"].get<std::string>();
+        }
+        if (test.find("side") != test.end() && test["side"].is_string()) {
+            test_order_.direction = test["side"].get<std::string>() == "sell" ? SELL : BUY;
+        }
+        if (test.find("price") != test.end() && test["price"].is_number()) {
+            test_order_.price = test["price"].get<double>();
+        }
+        if (test.find("volume") != test.end() && test["volume"].is_number_integer()) {
+            test_order_.volume = test["volume"].get<int>();
+        }
+        if (test.find("trigger_after_signals") != test.end() &&
+            test["trigger_after_signals"].is_number_integer()) {
+            test_order_.trigger_after_signals = test["trigger_after_signals"].get<int>();
+        }
+        if (test.find("cancel_delay_ms") != test.end() &&
+            test["cancel_delay_ms"].is_number_integer()) {
+            test_order_.cancel_delay_ms = test["cancel_delay_ms"].get<int>();
+        }
+        if (test_order_.volume <= 0) {
+            test_order_.enabled = false;
+        }
+        if (test_order_.trigger_after_signals < 1) {
+            test_order_.trigger_after_signals = 1;
+        }
+        if (test_order_.cancel_delay_ms < 0) {
+            test_order_.cancel_delay_ms = 0;
+        }
+    }
+
     
     if (config.find("global_params") != config.end()) {
         auto& global_params = config["global_params"];
@@ -265,6 +302,43 @@ int ZStrategy::insertOrder(RT_Order order) {
 #endif
     }
     return request_id;
+}
+
+void ZStrategy::maybe_send_test_order() {
+    if (!test_order_.enabled || test_order_sent_ || virtual_routing_ ||
+        !routing_enabled_ || context.curr_ob == nullptr) {
+        return;
+    }
+    if (!test_order_.instrument.empty() && test_order_.instrument != mTradeInstrument) {
+        return;
+    }
+    const double book_price = test_order_.direction == BUY
+        ? context.curr_ob->AskPrice1 : context.curr_ob->BidPrice1;
+    const double price = test_order_.price > 0.0 ? test_order_.price : book_price;
+    const int lot = i_params.vol_unit > 0 ? i_params.vol_unit : vol_unit;
+    const int volume = std::max(lot, test_order_.volume / lot * lot);
+    if (price <= 0.0 || volume <= 0) {
+        KF_LOG_ERROR(logger, "[SZTestOrder] skipped invalid market snapshot price=" << price
+            << " volume=" << volume);
+        test_order_sent_ = true;
+        return;
+    }
+
+    test_order_sent_ = true;
+    RT_Order order;
+    order.Price = price;
+    order.Volume = volume;
+    order.Direction = test_order_.direction;
+    order.Type = FAK;
+    const int request_id = insertOrder(order);
+    KF_LOG_INFO(logger, "[SZTestOrder] submitted instrument=" << mTradeInstrument
+        << " side=" << (order.Direction == BUY ? "buy" : "sell")
+        << " price=" << order.Price << " volume=" << order.Volume
+        << " request_id=" << request_id
+        << " cancel_delay_ms=" << test_order_.cancel_delay_ms);
+    if (request_id >= 0 && test_order_.cancel_delay_ms > 0) {
+        delay_cancel_order(request_id, test_order_.cancel_delay_ms);
+    }
 }
 
 
@@ -534,6 +608,10 @@ void ZStrategy::on_signal(const MSMarketDataField * market_data, double signal, 
     if (startup_signal_count_ <= kStartupWarmupSignalCount) {
         context.last_ob = market_data;
         return;
+    }
+    if (test_order_.enabled &&
+        startup_signal_count_ >= kStartupWarmupSignalCount + test_order_.trigger_after_signals) {
+        maybe_send_test_order();
     }
     calcTheo(signal);
     handleT0();

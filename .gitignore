@@ -20,4 +20,6 @@ secrets/
 
 runtime_so/
 artifacts/
+modules/deepwin_guoxin/api/include/atp_quant_*.h
+modules/deepwin_guoxin/api/lib/*
 reference/sz_md_recv/sze_l1_snapshot_collector

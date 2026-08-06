@@ -1,19 +1,18 @@
 {
   "name": "ZStrategy",
-  "strategy_name": "sze_mix153060_live_virtual_example",
+  "strategy_name": "sze_td_test_000001",
   "market": "SZ",
   "sz_orderbook_mode": "hp-realtime",
   "md_source_index": [88],
   "td_source_index": [180],
   "model_path": "/home/zane/models/mix153060_sze_v04_a3_eff60.bin",
-  "mix153060_model_sha256": "50e44caba694168d51188ac663c15d76e1b6dadb5d2b6ea72a5d1b0151069379",
   "sze_order_routing": {
     "enabled": true,
-    "mode": "virtual",
-    "td_source_note": "Shenzhen ATP TD source. Keep this equal to vtd.source in the main configuration."
+    "mode": "live",
+    "td_source_note": "Source 180 must match vtd.source and libsze_td.so."
   },
   "sze_test_order": {
-    "enabled": false,
+    "enabled": true,
     "instrument": "000001.SZ",
     "side": "buy",
     "price": 0.0,
@@ -31,7 +30,7 @@
   },
   "ins_params": {
     "000001.SZ": {
-      "Date": 20260729,
+      "Date": 20260807,
       "Close": 0.0,
       "HistoryAmount": 0.0,
       "HistoryVolatility20d": 0.0,
@@ -41,7 +40,7 @@
       "last_position": 0,
       "vol_unit": 100,
       "min_order_size": 100,
-      "max_order_size": 100000
+      "max_order_size": 100
     }
   }
 }

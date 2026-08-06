@@ -60,6 +60,36 @@ bool validate_live_routing(const nlohmann::json& config, std::string* error) {
         (mode->get<std::string>() != "live" && mode->get<std::string>() != "virtual")) {
         return reject("hp-realtime requires enabled sze_order_routing mode live or virtual", error);
     }
+    nlohmann::json::const_iterator test_order = config.find("sze_test_order");
+    if (test_order != config.end()) {
+        if (!test_order->is_object()) {
+            return reject("sze_test_order must be an object", error);
+        }
+        nlohmann::json::const_iterator test_enabled = test_order->find("enabled");
+        if (test_enabled != test_order->end() && !test_enabled->is_boolean()) {
+            return reject("sze_test_order.enabled must be boolean", error);
+        }
+        if (test_enabled != test_order->end() && test_enabled->get<bool>() &&
+            mode->get<std::string>() != "live") {
+            return reject("sze_test_order requires live routing mode", error);
+        }
+        nlohmann::json::const_iterator volume = test_order->find("volume");
+        if (volume != test_order->end() &&
+            (!volume->is_number_integer() || volume->get<int>() <= 0)) {
+            return reject("sze_test_order.volume must be a positive integer", error);
+        }
+        nlohmann::json::const_iterator side = test_order->find("side");
+        if (side != test_order->end() &&
+            (!side->is_string() || (side->get<std::string>() != "buy" &&
+                                    side->get<std::string>() != "sell"))) {
+            return reject("sze_test_order.side must be buy or sell", error);
+        }
+        nlohmann::json::const_iterator price = test_order->find("price");
+        if (price != test_order->end() &&
+            (!price->is_number() || price->get<double>() < 0.0)) {
+            return reject("sze_test_order.price must be non-negative", error);
+        }
+    }
     nlohmann::json::const_iterator capture = config.find("mix153060_capture");
     if (capture != config.end() && capture->is_object()) {
         nlohmann::json::const_iterator capture_only = capture->find("capture_only");

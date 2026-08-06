@@ -123,17 +123,30 @@ protected:
     double current_prediction_;  // 保存当前的prediction值，用于日志输出
 
 private:
+    struct TestOrderConfig {
+        bool enabled = false;
+        std::string instrument;
+        DirectionEnum direction = BUY;
+        double price = 0.0;
+        int volume = 100;
+        int trigger_after_signals = 1;
+        int cancel_delay_ms = 1000;
+    };
+
     const double pred_unit = 0.001;
     const int32_t vol_unit = 100;
     const double price_unit = 0.01;
     short td_source_ = 28;
     bool routing_enabled_ = false;
     bool virtual_routing_ = false;
+    TestOrderConfig test_order_;
+    bool test_order_sent_ = false;
     json j_config;
     double global_bias_factor_base_line_ = 0.0;
 
     double getCurPosition();
     int insertOrder(RT_Order order);
+    void maybe_send_test_order();
     void calcTheo(double prediction);
     void handleT0();
     void hitBuy();

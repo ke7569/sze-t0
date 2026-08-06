@@ -2,15 +2,15 @@
 
 ## Current finding
 
-The live Shenzhen deployment is currently capture/recovery/prediction shadow
-only. Its main configurations have empty `vmd` and `vtd` arrays and use
-`capture_only=true`. No live Shenzhen TD plugin, gateway implementation, or
-account configuration was found under `/home/zane`, `/home/zane/run_main`, or
-the independent `t0-sze` source tree.
+The live Shenzhen deployment was previously capture/recovery/prediction shadow
+only. The independent source tree now contains the Shenzhen TD adapter and a
+live test-order configuration, while account credentials and the vendor ATP
+runtime remain deployment-only inputs.
 
-The source tree contains the Deepwin `ITDEngine` interface and a virtual-live
-example referring to `libsze_td.so`, but that library is not deployed and the
-example is not a production gateway implementation.
+The adapter is built as `libsze_td.so` from the shared `TDEngineGXBSE`
+implementation with `T0_TD_ENGINE_KEY="sze_td"` and default market id `102`.
+The strategy reaches it through the normal Deepwin `ITDEngine` callbacks using
+`td_source_index=[180]`.
 
 ## Target account
 
@@ -28,14 +28,13 @@ They must be supplied through a root-only deployment secret.
 
 ## Required implementation before activation
 
-1. Identify or obtain the vendor TD plugin and its ABI-compatible build.
-2. Confirm whether the plugin expects one `vtd` source or separate Shenzhen and
-   Shanghai sources.
-3. Implement endpoint failover, login, heartbeat, reconnect, query, order,
-   cancel, and response correlation.
+1. Supply the broker ATP Quant runtime `libatpquantapi.so` and confirm its ABI.
+2. Confirm that the plugin is loaded as the single Shenzhen `vtd` source 180.
+3. Use the existing endpoint failover, login, heartbeat, reconnect, query,
+   order, cancel, and response-correlation implementation.
 4. Add a root-only secret file containing account credentials; do not put them
    into JSON committed to Git or into process command lines.
-5. Add a dry-run/login-only configuration and an order-disabled integration
-   test. Do not enable order submission from the shadow recovery strategy.
+5. Start with `sze_test_order.enabled=true` for one 100-share FAK order and
+   delayed cancel; keep recovery/capture configs order-disabled.
 6. Record the exact TD source id, plugin SHA256, endpoint configuration hash,
    and account alias in startup logs without printing secrets.

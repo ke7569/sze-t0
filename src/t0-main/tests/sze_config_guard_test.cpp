@@ -87,25 +87,47 @@ int main() {
         std::cerr << "virtual live config was rejected: " << error << std::endl;
         return 10;
     }
+    nlohmann::json test_order = realtime;
+    test_order["sze_order_routing"]["mode"] = "live";
+    test_order["sze_test_order"] = {
+        {"enabled", true}, {"instrument", "000001.SZ"}, {"side", "buy"},
+        {"price", 0.0}, {"volume", 100}, {"trigger_after_signals", 1},
+        {"cancel_delay_ms", 1000}
+    };
+    error = "stale";
+    if (!sze_strategy_library::validate_config(test_order, &error) || !error.empty()) {
+        std::cerr << "test order config was rejected: " << error << std::endl;
+        return 11;
+    }
+    nlohmann::json virtual_test_order = realtime;
+    virtual_test_order["sze_test_order"] = {{"enabled", true}};
+    if (!expect_rejected(virtual_test_order, "requires live routing mode")) {
+        return 12;
+    }
+    nlohmann::json bad_test_order = test_order;
+    bad_test_order["sze_test_order"]["volume"] = 0;
+    if (!expect_rejected(bad_test_order, "positive integer")) {
+        return 13;
+    }
     nlohmann::json realtime_capture = realtime;
     realtime_capture["mix153060_capture"] = {{"capture_only", true}};
     if (!expect_rejected(realtime_capture, "rejects capture_only")) {
-        return 11;
+        return 14;
     }
     nlohmann::json realtime_multi_td = realtime;
     realtime_multi_td["td_source_index"] = {180, 181};
     if (!expect_rejected(realtime_multi_td, "one td_source_index")) {
-        return 12;
+        return 15;
     }
     nlohmann::json realtime_recovery = realtime;
     realtime_recovery["sze_recovery_consumer"] = {{"enabled", true}};
     if (!expect_rejected(realtime_recovery, "rejects recovery consumer")) {
-        return 13;
+        return 16;
     }
     nlohmann::json shadow_routing = hp;
     shadow_routing["sze_order_routing"] = {{"enabled", true}, {"mode", "virtual"}};
     if (!expect_rejected(shadow_routing, "requires hp-realtime mode")) {
-        return 14;
+        return 17;
     }
 
     nlohmann::json recovery = hp;
@@ -122,25 +144,25 @@ int main() {
     error = "stale";
     if (!sze_strategy_library::validate_config(recovery, &error) || !error.empty()) {
         std::cerr << "recovery config was rejected: " << error << std::endl;
-        return 15;
+        return 18;
     }
 
     nlohmann::json duplicate_delivery = recovery;
     duplicate_delivery["md_source_index"] = {88};
     if (!expect_rejected(duplicate_delivery, "empty md_source_index")) {
-        return 16;
+        return 19;
     }
 
     nlohmann::json missing_shm = recovery;
     missing_shm["sze_recovery_consumer"].erase("shm_path");
     if (!expect_rejected(missing_shm, "requires shm_path for online handoff")) {
-        return 17;
+        return 20;
     }
 
     nlohmann::json same_cpu = recovery;
     same_cpu["sze_recovery_consumer"]["strategy_cpu"] = 7;
     if (!expect_rejected(same_cpu, "must be distinct")) {
-        return 18;
+        return 21;
     }
 
     nlohmann::json analysis = recovery;
@@ -155,31 +177,31 @@ int main() {
     error = "stale";
     if (!sze_strategy_library::validate_config(analysis, &error) || !error.empty()) {
         std::cerr << "analysis config was rejected: " << error << std::endl;
-        return 19;
+        return 22;
     }
     analysis["sze_recovery_consumer"].erase("shm_path");
     error = "stale";
     if (!sze_strategy_library::validate_config(analysis, &error) || !error.empty()) {
         std::cerr << "journal-only analysis config was rejected: " << error << std::endl;
-        return 20;
+        return 23;
     }
 
     nlohmann::json analysis_live = analysis;
     analysis_live["mix153060_capture"]["capture_only"] = false;
     if (!expect_rejected(analysis_live, "requires enabled capture_only")) {
-        return 21;
+        return 24;
     }
 
     nlohmann::json analysis_td = analysis;
     analysis_td["td_source_index"] = {180};
     if (!expect_rejected(analysis_td, "requires empty td_source_index")) {
-        return 22;
+        return 25;
     }
 
     nlohmann::json analysis_vtd = analysis;
     analysis_vtd["vtd"] = {{"source", 180}};
     if (!expect_rejected(analysis_vtd, "requires explicit empty vtd")) {
-        return 23;
+        return 26;
     }
 
     std::cout << "sze_config_guard_test: PASS" << std::endl;
