@@ -258,7 +258,7 @@ void MDEngineSZE::load_recovery_config(const json& j_config)
         config, "journal_max_payload_bytes",
         recovery_config_.journal_max_payload_bytes);
     const std::uint64_t min_free_gb = json_value_or<std::uint64_t>(
-        config, "journal_min_free_gb_after_allocate", 20U);
+        config, "journal_min_free_gb_after_allocate", 80U);
     recovery_config_.journal_min_free_bytes_after_allocate =
         min_free_gb * 1024ULL * 1024ULL * 1024ULL;
     recovery_config_.flush_interval_ms = json_value_or<int>(

@@ -222,14 +222,14 @@ def main():
         "sze_recovery_consumer": {
             "enabled": True, "trading_day": int(args.target_date), "source_id": 88,
             "journal_directory": journal_directory, "journal_prefix": args.name,
-            "journal_segment_mb": 4096, "journal_max_payload_bytes": 128,
+            "journal_segment_mb": 1024, "journal_max_payload_bytes": 128,
             "shm_path": shm_path, "state_cpu": 7, "strategy_cpu": 8,
         },
         "mix153060_capture": {
             "enabled": True, "directory": capture_directory,
             "prefix": "{}_{}".format(args.name, args.target_date), "instruments": symbols,
             "events": True, "samples": True, "capture_only": True,
-            "flush_rows": 4096, "flush_interval_ms": 1000,
+            "flush_rows": 1024, "flush_interval_ms": 1000,
         },
         "global_params": {"offset": 0.8, "quote_offset": 5, "bias_factor": 0.5,
                           "position_limit": 0.3, "global_bias_factor": 1,
@@ -242,7 +242,7 @@ def main():
             "recoverable_pipeline": {
                 "enabled": True, "backend": "socket", "trading_day": int(args.target_date),
                 "journal_directory": journal_directory, "journal_prefix": args.name,
-                "journal_segment_mb": 4096, "journal_max_payload_bytes": 128,
+                "journal_segment_mb": 1024, "journal_max_payload_bytes": 128,
                 "journal_min_free_gb_after_allocate": 200, "flush_interval_ms": 100,
                 "flush_cpu": 6, "shm_path": shm_path, "shm_capacity": 1048576,
                 "shm_max_payload_bytes": 128, "replace_stale_shm": True,
