@@ -1,0 +1,142 @@
+cmake_minimum_required(VERSION 3.10)
+project(sze_dev_debug CXX)
+
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+option(SZE_MARCH_NATIVE "Compile for the build machine CPU" OFF)
+
+if(SZE_MARCH_NATIVE)
+  add_compile_options(-march=native)
+else()
+  add_compile_options(-march=x86-64 -mtune=generic)
+endif()
+add_compile_options(-O3 -DNDEBUG)
+
+set(T0 ${CMAKE_CURRENT_SOURCE_DIR}/src/t0-main)
+set(SZE_MD ${CMAKE_CURRENT_SOURCE_DIR}/modules/deepwin_guoxin/md)
+set(RUNTIME ${CMAKE_CURRENT_SOURCE_DIR}/runtime_so)
+set(DEEPWIN_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/toolchain/deepwin_include)
+set(BOOST_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/toolchain/boost_include)
+set(PYTHON_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/toolchain/python_include)
+set(WC_LIB ${RUNTIME}/deepwin_core/lib/wingchun)
+set(YJJ_LIB ${RUNTIME}/deepwin_core/lib/yijinjing)
+set(TPWC_LIB ${RUNTIME}/third_party/wingchun)
+set(BOOST_LIB ${RUNTIME}/third_party/boost)
+
+set(SZE_COMMON_SOURCES
+  ${T0}/common.cpp
+  ${T0}/snap_generator.cpp
+  ${T0}/order_match_engine.cpp
+  ${T0}/sz_hp_orderbook.cpp
+  ${T0}/sz_hp_realtime_state.cpp
+  ${T0}/sz_hp_factor_adapter.cpp
+  ${T0}/sz_hp_latency.cpp
+  ${T0}/shsz_full_orderbook_engine.cpp
+  ${T0}/shsz_full_orderbook_diagnostics.cpp
+  ${T0}/shsz_full_orderbook_factor.cpp
+  ${T0}/shsz_full_orderbook_manager.cpp
+  ${T0}/shsz_predictor_transition_adapter.cpp
+  ${T0}/order_list.cpp
+  ${T0}/predictor/md_utils.cpp
+  ${T0}/predictor/factor.cpp
+  ${T0}/predictor/predictor.cpp
+  ${T0}/predictor/mix153060_model.cpp
+  ${T0}/predictor/mix153060_capture.cpp
+  ${T0}/predictor/mix153060_runtime.cpp
+  ${T0}/predictor/mix153060_live_adapter.cpp
+  ${T0}/snap_latency.cpp
+  ${T0}/bse_latency.cpp
+  ${T0}/strategy/StrategyBase.cpp
+  ${T0}/strategy/ZStrategy.cpp
+  ${T0}/deepwin_strategy/sze_config_guard.cpp
+  ${T0}/deepwin_strategy/sze_get_obj.cpp
+  ${SZE_MD}/SZEProtocol.cpp
+  ${SZE_MD}/SZERecoverable.cpp)
+
+set(DEEPWIN_LIBS
+  ${WC_LIB}/libwingchunstrategy.so
+  ${YJJ_LIB}/libjournal.so.1.1
+  ${YJJ_LIB}/libkflog.so
+  ${TPWC_LIB}/libpython3.6m.so.1.0
+  ${BOOST_LIB}/libboost_locale.so.1.62.0
+  ${BOOST_LIB}/libboost_date_time.so.1.62.0
+  ${BOOST_LIB}/libboost_filesystem.so.1.62.0
+  ${BOOST_LIB}/libboost_system.so.1.62.0
+  ${BOOST_LIB}/libboost_thread.so.1.62.0
+  ${BOOST_LIB}/libboost_serialization.so.1.62.0
+  ${BOOST_LIB}/libboost_math_tr1.so.1.62.0
+  ${BOOST_LIB}/libboost_python.so.1.62.0
+  ${BOOST_LIB}/libboost_chrono.so.1.62.0
+  ${BOOST_LIB}/libboost_regex.so.1.62.0
+  ${BOOST_LIB}/libboost_program_options.so.1.62.0
+  ${BOOST_LIB}/libboost_atomic.so.1.62.0
+  pthread dl util rt m)
+
+add_library(t0_strategy_sze SHARED ${SZE_COMMON_SOURCES})
+target_compile_definitions(t0_strategy_sze PRIVATE T0_USE_DEEPWIN T0_SZE_STRATEGY_ONLY)
+target_include_directories(t0_strategy_sze PRIVATE
+  ${T0} ${T0}/strategy ${T0}/predictor ${SZE_MD}
+  ${DEEPWIN_INCLUDE} ${DEEPWIN_INCLUDE}/longfist ${BOOST_INCLUDE} ${PYTHON_INCLUDE})
+target_link_libraries(t0_strategy_sze PRIVATE ${DEEPWIN_LIBS})
+set_target_properties(t0_strategy_sze PROPERTIES
+  OUTPUT_NAME t0_strategy_sze
+  BUILD_RPATH "${WC_LIB};${YJJ_LIB};${TPWC_LIB};${BOOST_LIB}")
+set_source_files_properties(${T0}/predictor/mix153060_runtime.cpp
+  PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+
+add_library(sze_md SHARED
+  ${SZE_MD}/MDEngineSZE.cpp ${SZE_MD}/SZEProtocol.cpp ${SZE_MD}/SZERecoverable.cpp)
+target_include_directories(sze_md PRIVATE
+  ${SZE_MD} ${DEEPWIN_INCLUDE} ${DEEPWIN_INCLUDE}/longfist
+  ${BOOST_INCLUDE} ${PYTHON_INCLUDE})
+target_link_libraries(sze_md PRIVATE
+  ${YJJ_LIB}/libjournal.so.1.1 ${YJJ_LIB}/libkflog.so
+  ${WC_LIB}/libwingchunmd.so ${TPWC_LIB}/libpython3.6m.so.1.0
+  ${TPWC_LIB}/liblog4cplus.so.0
+  ${BOOST_LIB}/libboost_locale.so.1.62.0
+  ${BOOST_LIB}/libboost_date_time.so.1.62.0
+  ${BOOST_LIB}/libboost_filesystem.so.1.62.0
+  ${BOOST_LIB}/libboost_system.so.1.62.0
+  ${BOOST_LIB}/libboost_thread.so.1.62.0
+  ${BOOST_LIB}/libboost_serialization.so.1.62.0
+  ${BOOST_LIB}/libboost_math_tr1.so.1.62.0
+  ${BOOST_LIB}/libboost_python.so.1.62.0
+  ${BOOST_LIB}/libboost_chrono.so.1.62.0
+  ${BOOST_LIB}/libboost_regex.so.1.62.0
+  ${BOOST_LIB}/libboost_program_options.so.1.62.0
+  ${BOOST_LIB}/libboost_atomic.so.1.62.0 pthread dl rt)
+set_target_properties(sze_md PROPERTIES OUTPUT_NAME sze_md
+  BUILD_RPATH "${WC_LIB};${YJJ_LIB};${TPWC_LIB};${BOOST_LIB}")
+
+enable_testing()
+add_executable(sze_recoverable_test
+  ${SZE_MD}/tests/sze_recoverable_test.cpp ${SZE_MD}/SZERecoverable.cpp)
+target_include_directories(sze_recoverable_test PRIVATE ${SZE_MD})
+target_link_libraries(sze_recoverable_test PRIVATE pthread rt)
+target_compile_options(sze_recoverable_test PRIVATE -UNDEBUG)
+add_test(NAME sze_recoverable_test COMMAND sze_recoverable_test)
+
+add_executable(sze_protocol_test
+  ${SZE_MD}/tests/sze_protocol_test.cpp ${SZE_MD}/SZEProtocol.cpp
+  ${SZE_MD}/SZERecoverable.cpp)
+target_include_directories(sze_protocol_test PRIVATE ${SZE_MD} ${DEEPWIN_INCLUDE})
+target_link_libraries(sze_protocol_test PRIVATE pthread rt)
+target_compile_options(sze_protocol_test PRIVATE -UNDEBUG)
+add_test(NAME sze_protocol_test COMMAND sze_protocol_test)
+
+add_executable(sze_config_guard_test
+  ${T0}/tests/sze_config_guard_test.cpp ${T0}/deepwin_strategy/sze_config_guard.cpp)
+target_include_directories(sze_config_guard_test PRIVATE ${T0})
+add_test(NAME sze_config_guard_test COMMAND sze_config_guard_test)
+
+add_executable(sze_recovery_status
+  ${SZE_MD}/tools/sze_recovery_status.cpp ${SZE_MD}/SZERecoverable.cpp)
+target_include_directories(sze_recovery_status PRIVATE ${SZE_MD})
+target_link_libraries(sze_recovery_status PRIVATE pthread rt)
+
+add_executable(sze_recovery_verify
+  ${SZE_MD}/tools/sze_recovery_verify.cpp ${SZE_MD}/SZEProtocol.cpp
+  ${SZE_MD}/SZERecoverable.cpp)
+target_include_directories(sze_recovery_verify PRIVATE ${SZE_MD} ${DEEPWIN_INCLUDE})
+target_link_libraries(sze_recovery_verify PRIVATE pthread rt)

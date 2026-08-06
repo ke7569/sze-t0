@@ -1,0 +1,8 @@
+instrument=000001.SZ
+historical_endpoint=https://push2his.eastmoney.com/api/qt/stock/kline/get
+historical_query=secid=0.000001&klt=101&fqt=0&lmt=25&end=20260720&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61
+quote_endpoint=https://push2.eastmoney.com/api/qt/stock/get
+quote_query=secid=0.000001&fields=f51,f52,f57,f58,f60
+limit_mapping=quote f51=upper_limit (1186 -> 11.86), f52=lower_limit (970 -> 9.70)
+retrieved_utc=2026-07-20T06:44Z
+price_adjustment=unadjusted (fqt=0)

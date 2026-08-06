@@ -1,0 +1,17 @@
+{
+  "md": {
+    "sze_l1": {
+      "use_subscribe_filter": false,
+      "subscribe_all": true,
+      "channels": [
+        {
+          "multicast_ip": "REPLACE_WITH_SZE_L1_MULTICAST_IP",
+          "port": 0,
+          "iface_ip": "REPLACE_WITH_RECEIVER_INTERFACE_IP",
+          "cpu": 7,
+          "rcvbuf_mb": 64
+        }
+      ]
+    }
+  }
+}

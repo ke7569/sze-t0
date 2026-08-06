@@ -1,0 +1,36 @@
+syntax = "proto2";
+
+package HpXVer;
+
+message PendingItem {
+  optional double price = 1;
+  optional int32 volume = 2;
+};
+
+message PriceInfo {
+  optional string instrument = 1;
+  optional double force_withdraw_buy_price = 2;
+  optional double force_withdraw_sell_price = 3;
+  repeated PendingItem pending_buy_volume_dict = 4;
+  repeated PendingItem pending_sell_volume_dict = 5;
+};
+
+message HpxSubProto {
+  optional int32 managed_suffix = 1; // 管理合约索引
+  optional string key_suffix = 2; // p值参数索引
+};
+
+message TheoProgress {
+  optional string instrument = 1;
+  optional int32 managed_suffix = 2; // 管理合约索引
+  optional string key_suffix = 3; // p值参数索引
+  optional double value = 4;
+};
+
+message HpxPriceProto {
+  repeated PriceInfo items = 1;
+};
+
+message HpxTheoProgressProto {
+  repeated TheoProgress items = 1;
+};

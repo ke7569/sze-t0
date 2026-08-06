@@ -1,0 +1,22 @@
+{
+  "protocol": "EFH_SZE_3.2.8",
+  "api_reference": "EFH_QUOTE_RECV_API_V2.5.7",
+  "record_bytes": 72,
+  "heartbeat_bytes": 16,
+  "message_types": {
+    "order": 23,
+    "execution": 24,
+    "tick_heartbeat": 123
+  },
+  "scales": {
+    "price_divisor": 10000,
+    "quantity_divisor": 100
+  },
+  "deepwin_source_id": 88,
+  "reference_files": [
+    "ref/sz_md_recv/sz_tick_decode_probe.c",
+    "ref/sz_md_recv/README_sz_fpga_udp_probe.md",
+    "docs/FPGA行情接入.rar"
+  ],
+  "notes": "The archive is supplied reference material; production uses the native UDP decoder in modules/deepwin_guoxin/md."
+}

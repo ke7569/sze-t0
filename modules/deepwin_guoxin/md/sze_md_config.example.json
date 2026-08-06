@@ -1,0 +1,38 @@
+{
+  "batch": 32,
+  "use_subscribe_filter": true,
+  "subscribe_all": false,
+  "recoverable_pipeline": {
+    "enabled": false,
+    "backend": "socket",
+    "trading_day": 20260722,
+    "journal_directory": "/home/zane/data/sze_journal",
+    "journal_prefix": "000001",
+    "journal_segment_mb": 1024,
+    "journal_max_payload_bytes": 128,
+    "journal_min_free_gb_after_allocate": 20,
+    "flush_interval_ms": 100,
+    "flush_cpu": 6,
+    "shm_path": "/dev/shm/sze_000001_20260722.events",
+    "shm_capacity": 262144,
+    "shm_max_payload_bytes": 128,
+    "replace_stale_shm": true,
+    "unlink_shm_on_clean_shutdown": true,
+    "malformed_diagnostic_path": "/home/zane/data/sze_journal/000001_20260722_malformed.bin",
+    "malformed_diagnostic_max_records": 1000
+  },
+  "channels": [
+    {
+      "multicast_ip": "239.35.81.1",
+      "port": 37101,
+      "iface_ip": "11.11.11.11",
+      "ifname": "hqh-p1-k2",
+      "bind_ip": "0.0.0.0",
+      "bind_port": 37101,
+      "cpu": 5,
+      "rcvbuf_mb": 64,
+      "busy_poll_us": 0,
+      "realtime_prio": 0
+    }
+  ]
+}
