@@ -1,0 +1,46 @@
+{
+  "name": "ZStrategy",
+  "strategy_name": "sze_td_test_000001",
+  "market": "SZ",
+  "sz_orderbook_mode": "hp-realtime",
+  "md_source_index": [88],
+  "td_source_index": [180],
+  "model_path": "/home/zane/models/mix153060_sze_v04_a3_eff60.bin",
+  "sze_order_routing": {
+    "enabled": true,
+    "mode": "live",
+    "td_source_note": "Source 180 must match vtd.source and libsze_td.so."
+  },
+  "sze_test_order": {
+    "enabled": true,
+    "instrument": "000001.SZ",
+    "side": "buy",
+    "price": 0.0,
+    "volume": 100,
+    "trigger_after_signals": 1,
+    "cancel_delay_ms": 1000
+  },
+  "global_params": {
+    "offset": 1.8,
+    "quote_offset": 5,
+    "bias_factor": 1.0,
+    "global_bias_factor": 1.0,
+    "position_limit": 0.3,
+    "position_base_line": 100000.0
+  },
+  "ins_params": {
+    "000001.SZ": {
+      "Date": 20260807,
+      "Close": 0.0,
+      "HistoryAmount": 0.0,
+      "HistoryVolatility20d": 0.0,
+      "HpUpperPrice": 0.0,
+      "HpLowerPrice": 0.0,
+      "static_position": 0,
+      "last_position": 0,
+      "vol_unit": 100,
+      "min_order_size": 100,
+      "max_order_size": 100
+    }
+  }
+}
