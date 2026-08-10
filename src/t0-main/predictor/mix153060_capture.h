@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -12,16 +13,22 @@
 
 namespace mix153060 {
 
+class AsyncPredictionLog;
+
 struct CaptureConfig {
     bool enabled;
     std::string directory;
     std::string prefix;
     std::vector<std::string> instruments;
+    std::string output_format;
+    std::vector<std::string> detail_instruments;
     bool record_events;
     bool record_samples;
     bool capture_only;
     std::size_t flush_rows;
     std::uint32_t flush_interval_ms;
+    std::size_t log_batch_bytes;
+    std::size_t log_queue_bytes;
 
     CaptureConfig();
 };
@@ -36,6 +43,7 @@ public:
 
     bool ready() const;
     bool enabled_for(const std::string& instrument) const;
+    bool detail_enabled_for(const std::string& instrument) const;
     const std::string& error() const;
     const std::string& events_path() const;
     const std::string& samples_path() const;
@@ -104,6 +112,8 @@ private:
     std::size_t pending_rows_;
     std::uint64_t last_flush_mono_ns_;
     std::set<std::string> instruments_;
+    std::set<std::string> detail_instruments_;
+    bool binary_log_;
     std::string error_;
     std::string events_path_;
     std::string samples_path_;
@@ -114,6 +124,7 @@ private:
     std::ofstream events_file_;
     std::ofstream samples_file_;
     std::ofstream market_resolutions_file_;
+    std::unique_ptr<AsyncPredictionLog> prediction_log_;
 };
 
 }  // namespace mix153060
