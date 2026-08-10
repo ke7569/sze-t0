@@ -83,6 +83,11 @@ ZStrategy::ZStrategy(const std::string &InstrumentID,
         if (routing.find("mode") != routing.end() && routing["mode"].is_string()) {
             virtual_routing_ = routing["mode"].get<std::string>() == "virtual";
         }
+        recovery_routing_ = routing.value("input_mode", std::string()) == "recovery_handoff";
+        buy_only_ = routing.value("buy_only", false);
+        max_order_volume_ = routing.value("max_order_volume", 0);
+        max_position_ = routing.value("max_position", 0);
+        max_orders_per_instrument_ = routing.value("max_orders_per_instrument", 0);
     }
 
     if (config.find("sze_test_order") != config.end() &&
@@ -258,6 +263,29 @@ int ZStrategy::insertOrder(RT_Order order) {
             << ", Exchange=" << ExchangeID
             << ", td_source=" << td_source_);
         return -1;
+    }
+    if (recovery_routing_) {
+        const int current_position = i_params.static_position + context.pi;
+        if (buy_only_ && order.Direction != BUY) {
+            KF_LOG_ERROR(logger, "[SZEOrderBlocked] InstrumentID=" << mTradeInstrument
+                << ", reason=buy_only");
+            return -1;
+        }
+        if (max_order_volume_ <= 0 || order.Volume > max_order_volume_ ||
+            (max_position_ > 0 && order.Direction == BUY &&
+             current_position + context.vl_pos + static_cast<int>(order.Volume) > max_position_) ||
+            (max_position_ > 0 && order.Direction == SELL &&
+             current_position - context.vs_pos - static_cast<int>(order.Volume) < 0) ||
+            (max_orders_per_instrument_ > 0 &&
+             submitted_order_count_ >= max_orders_per_instrument_)) {
+            KF_LOG_ERROR(logger, "[SZEOrderBlocked] InstrumentID=" << mTradeInstrument
+                << ", reason=recovery_order_limit"
+                << ", volume=" << order.Volume
+                << ", current_position=" << current_position
+                << ", submitted=" << submitted_order_count_);
+            return -1;
+        }
+        ++submitted_order_count_;
     }
     char direction = '0';
     char offsetFlag = '0';
@@ -566,7 +594,8 @@ void ZStrategy::hitSell() {
 }
 
 int32_t ZStrategy::maxCanBuy() {
-    int32_t qty = std::min(getRemainingShortable(), getPositionLimit()) - context.pi - context.vl_pos;
+    // shortable is sell availability; it must not cap a buy used to reach the target position.
+    int32_t qty = getPositionLimit() - context.pi - context.vl_pos;
     if (context.curr_ob != nullptr && context.curr_ob->LastPrice > 0.0) {
         qty = std::min(qty, static_cast<int32_t>(i_params.max_order_size / context.curr_ob->LastPrice));
     } else {

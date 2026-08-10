@@ -139,6 +139,12 @@ private:
     short td_source_ = 28;
     bool routing_enabled_ = false;
     bool virtual_routing_ = false;
+    bool recovery_routing_ = false;
+    bool buy_only_ = false;
+    int max_order_volume_ = 0;
+    int max_position_ = 0;
+    int max_orders_per_instrument_ = 0;
+    int submitted_order_count_ = 0;
     TestOrderConfig test_order_;
     bool test_order_sent_ = false;
     json j_config;
