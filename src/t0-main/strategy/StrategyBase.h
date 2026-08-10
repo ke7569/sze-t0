@@ -206,6 +206,7 @@ private:
         int state_cpu = -1;
         int strategy_cpu = -1;
         bool allow_invalid_replay_for_analysis = false;
+        bool trading_enabled = false;
     };
 
     struct SzeTradingSignal {

@@ -184,9 +184,6 @@ def main(argv=None):
             "Close": pre_close,
             "HistoryAmount": history_amount,
             "FreeShare": free_share,
-            "free_share_unit": "10k_shares",
-            "free_share_source": "tushare.daily_basic",
-            "free_share_source_date": int(free_share_source_date),
             "HpUpperPrice": upper,
             "HpLowerPrice": lower,
             "HistoryVolatility20d": 0.0,
@@ -206,21 +203,14 @@ def main(argv=None):
             "limit_source": limit_source,
         })
 
-    his_amt = [params[code + ".SZ"]["HistoryAmount"] for code in instruments]
     config = {
         "strategy_name": "sze_recovery_all_{}".format(target),
-        "name": "ZStrategy",
         "market": "SZ",
-        "sz_orderbook_mode": "hp-shadow",
-        "orderbook_mode": "hp-shadow",
+        "mode": "hp-shadow",
         "model_path": args.model_path,
         "mix153060_model_sha256": MODEL_SHA256,
         "md_source_index": [],
         "td_source_index": [],
-        "instrument_id": instruments,
-        "his_amt": his_amt,
-        "static_position": [0] * len(instruments),
-        "last_position": [0] * len(instruments),
         "ins_params": params,
         "global_params": {
             "offset": 0.8, "quote_offset": 5, "bias_factor": 0.5,
@@ -236,13 +226,17 @@ def main(argv=None):
             "shm_path": "/dev/shm/sze_all_{}.events".format(target),
             "state_cpu": 7, "strategy_cpu": 8,
         },
-        "mix153060_capture": {
+        "sze_prediction_capture": {
             "enabled": True,
             "directory": "/home/zane/run_main/log/sze_all_{}".format(target),
             "prefix": "sze_all_{}".format(target),
-            "instruments": [code + ".SZ" for code in instruments],
+            "output_format": "sze_log",
+            "detail_instruments": ["000001.SZ"] if "000001" in instruments else [],
             "events": True, "samples": True, "capture_only": True,
-            "flush_rows": 1024,
+            "flush_rows": 4096,
+            "flush_interval_ms": 1000,
+            "log_batch_bytes": 1048576,
+            "log_queue_bytes": 268435456,
         },
     }
     output_dir = os.path.abspath(args.output_dir)

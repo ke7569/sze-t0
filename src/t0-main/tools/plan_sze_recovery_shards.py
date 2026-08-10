@@ -41,11 +41,19 @@ def main():
         raise ValueError("shards must be in [1,16]")
     with open(args.input_json, encoding="utf-8") as stream:
         base = json.load(stream)
-    codes = list(base.get("instrument_id") or [])
-    amounts = list(base.get("his_amt") or [])
     params = base.get("ins_params") or {}
+    codes = list(base.get("instrument_id") or [
+        str(key).split(".")[0] for key in sorted(params)
+    ])
+    amounts = list(base.get("his_amt") or [])
+    if not amounts:
+        for code in codes:
+            symbol = normalized_symbol(code)
+            if symbol not in params or "HistoryAmount" not in params[symbol]:
+                raise ValueError("missing ins_params.HistoryAmount for " + symbol)
+            amounts.append(params[symbol]["HistoryAmount"])
     if not codes or len(codes) != len(amounts):
-        raise ValueError("instrument_id and his_amt must be non-empty and equal length")
+        raise ValueError("configuration must contain a non-empty instrument universe")
     groups = [[] for _ in range(args.shards)]
     for index, code in enumerate(codes):
         symbol = normalized_symbol(code)
@@ -68,11 +76,15 @@ def main():
         consumer = config["sze_recovery_consumer"]
         consumer["state_cpu"] = args.state_cpu_base + shard_id
         consumer["strategy_cpu"] = args.state_cpu_base + args.shards + shard_id
-        capture = config["mix153060_capture"]
+        capture = config.get("sze_prediction_capture")
+        if not isinstance(capture, dict):
+            capture = config["mix153060_capture"]
         capture["directory"] = os.path.join(args.capture_directory,
                                              "shard_{:02d}".format(shard_id))
         capture["prefix"] = "shard_{:02d}".format(shard_id)
         capture["instruments"] = [entry[2] for entry in entries]
+        for redundant in ("instrument_id", "his_amt", "static_position", "last_position"):
+            config.pop(redundant, None)
         name = "config_sze_recovery_shard_{:02d}.json".format(shard_id)
         write_json(os.path.join(args.output_dir, name), config)
         trading_day = config["sze_recovery_consumer"]["trading_day"]

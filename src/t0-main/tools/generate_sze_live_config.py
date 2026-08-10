@@ -603,7 +603,9 @@ def build_config(template, records, target_date, args, source_paths, row_count,
     config["mix153060_model_sha256"] = model_hash
     config["md_source_index"] = list(md_indices)
     config["td_source_index"] = list(td_indices)
-    capture = config.get("mix153060_capture")
+    capture = config.get("sze_prediction_capture")
+    if not isinstance(capture, dict):
+        capture = config.get("mix153060_capture")
     if isinstance(capture, dict) and capture.get("enabled"):
         prefix = capture.get("prefix")
         if isinstance(prefix, str):

@@ -62,6 +62,15 @@ int main() {
         return 6;
     }
 
+    nlohmann::json compact_hp = hp;
+    compact_hp.erase("sz_orderbook_mode");
+    compact_hp["mode"] = "hp-shadow";
+    error = "stale";
+    if (!sze_strategy_library::validate_config(compact_hp, &error) || !error.empty()) {
+        std::cerr << "compact HP config was rejected: " << error << std::endl;
+        return 27;
+    }
+
     nlohmann::json hp_missing = hp;
     hp_missing.erase("model_path");
     if (!expect_rejected(hp_missing, "requires non-empty string model_path")) {
@@ -121,8 +130,34 @@ int main() {
     }
     nlohmann::json realtime_recovery = realtime;
     realtime_recovery["sze_recovery_consumer"] = {{"enabled", true}};
-    if (!expect_rejected(realtime_recovery, "rejects recovery consumer")) {
+    if (!expect_rejected(realtime_recovery, "requires explicit trading_enabled")) {
         return 16;
+    }
+    realtime_recovery["md_source_index"] = nlohmann::json::array();
+    realtime_recovery["sze_recovery_consumer"] = {
+        {"enabled", true},
+        {"trading_enabled", true},
+        {"trading_day", 20260810},
+        {"journal_directory", "/home/zane/data/sze_journal_20260810"},
+        {"journal_prefix", "sze_all"},
+        {"shm_path", "/dev/shm/sze_all_20260810.events"},
+        {"state_cpu", 34},
+        {"strategy_cpu", 35}
+    };
+    realtime_recovery["sze_order_routing"] = {
+        {"enabled", true},
+        {"mode", "live"},
+        {"input_mode", "recovery_handoff"},
+        {"buy_only", true},
+        {"max_order_volume", 200},
+        {"max_position", 200},
+        {"max_orders_per_instrument", 1}
+    };
+    error = "stale";
+    if (!sze_strategy_library::validate_config(realtime_recovery, &error) ||
+        !error.empty()) {
+        std::cerr << "recovery trading config was rejected: " << error << std::endl;
+        return 28;
     }
     nlohmann::json shadow_routing = hp;
     shadow_routing["sze_order_routing"] = {{"enabled", true}, {"mode", "virtual"}};

@@ -11,41 +11,39 @@ bool reject(const char* message, std::string* error) {
     return false;
 }
 
+std::string configured_mode(const nlohmann::json& config) {
+    const char* keys[] = {"sz_orderbook_mode", "mode", "orderbook_mode"};
+    for (std::size_t index = 0; index < sizeof(keys) / sizeof(keys[0]); ++index) {
+        nlohmann::json::const_iterator item = config.find(keys[index]);
+        if (item != config.end() && item->is_string()) {
+            return item->get<std::string>();
+        }
+    }
+    return std::string();
+}
+
 bool is_hp_mode(const nlohmann::json& config) {
-    nlohmann::json::const_iterator mode = config.find("sz_orderbook_mode");
-    if (mode == config.end() || !mode->is_string()) {
-        mode = config.find("orderbook_mode");
-    }
-    if (mode == config.end() || !mode->is_string()) {
-        return false;
-    }
-    const std::string value = mode->get<std::string>();
+    const std::string value = configured_mode(config);
     return value == "hp-shadow" || value == "hp_shadow" ||
            value == "hp-realtime" || value == "hp_realtime";
 }
 
 bool is_hp_shadow_mode(const nlohmann::json& config) {
-    nlohmann::json::const_iterator mode = config.find("sz_orderbook_mode");
-    if (mode == config.end() || !mode->is_string()) {
-        mode = config.find("orderbook_mode");
-    }
-    if (mode == config.end() || !mode->is_string()) {
-        return false;
-    }
-    const std::string value = mode->get<std::string>();
+    const std::string value = configured_mode(config);
     return value == "hp-shadow" || value == "hp_shadow";
 }
 
 bool is_hp_realtime_mode(const nlohmann::json& config) {
-    nlohmann::json::const_iterator mode = config.find("sz_orderbook_mode");
-    if (mode == config.end() || !mode->is_string()) {
-        mode = config.find("orderbook_mode");
-    }
-    if (mode == config.end() || !mode->is_string()) {
-        return false;
-    }
-    const std::string value = mode->get<std::string>();
+    const std::string value = configured_mode(config);
     return value == "hp-realtime" || value == "hp_realtime";
+}
+
+nlohmann::json::const_iterator find_capture(const nlohmann::json& config) {
+    nlohmann::json::const_iterator capture = config.find("sze_prediction_capture");
+    if (capture == config.end()) {
+        capture = config.find("mix153060_capture");
+    }
+    return capture;
 }
 
 bool validate_live_routing(const nlohmann::json& config, std::string* error) {
@@ -90,7 +88,7 @@ bool validate_live_routing(const nlohmann::json& config, std::string* error) {
             return reject("sze_test_order.price must be non-negative", error);
         }
     }
-    nlohmann::json::const_iterator capture = config.find("mix153060_capture");
+    nlohmann::json::const_iterator capture = find_capture(config);
     if (capture != config.end() && capture->is_object()) {
         nlohmann::json::const_iterator capture_only = capture->find("capture_only");
         if (capture_only != capture->end() && capture_only->is_boolean() &&
@@ -99,19 +97,47 @@ bool validate_live_routing(const nlohmann::json& config, std::string* error) {
         }
     }
     nlohmann::json::const_iterator recovery = config.find("sze_recovery_consumer");
+    bool recovery_trading = false;
     if (recovery != config.end() && recovery->is_object()) {
         nlohmann::json::const_iterator recovery_enabled = recovery->find("enabled");
         if (recovery_enabled != recovery->end() && recovery_enabled->is_boolean() &&
             recovery_enabled->get<bool>()) {
-            return reject("sze_order_routing rejects recovery consumer", error);
+            nlohmann::json::const_iterator trading_enabled = recovery->find("trading_enabled");
+            recovery_trading = trading_enabled != recovery->end() &&
+                trading_enabled->is_boolean() && trading_enabled->get<bool>();
+            if (!recovery_trading) {
+                return reject("recovery trading requires explicit trading_enabled", error);
+            }
         }
     }
     nlohmann::json::const_iterator md_sources = config.find("md_source_index");
     nlohmann::json::const_iterator td_sources = config.find("td_source_index");
-    if (md_sources == config.end() || !md_sources->is_array() || md_sources->empty() ||
+    if (md_sources == config.end() || !md_sources->is_array() ||
+        (!recovery_trading && md_sources->empty()) ||
         td_sources == config.end() || !td_sources->is_array() || td_sources->size() != 1 ||
         !td_sources->at(0).is_number_integer()) {
-        return reject("sze_order_routing requires non-empty md_source_index and one td_source_index", error);
+        return reject("sze_order_routing requires market source or recovery handoff and one td_source_index", error);
+    }
+    if (recovery_trading) {
+        nlohmann::json::const_iterator handoff = routing->find("input_mode");
+        if (handoff == routing->end() || !handoff->is_string() ||
+            handoff->get<std::string>() != "recovery_handoff") {
+            return reject("recovery trading requires input_mode=recovery_handoff", error);
+        }
+        const char* required_limits[] = {
+            "max_order_volume", "max_position", "max_orders_per_instrument"
+        };
+        for (std::size_t i = 0; i < sizeof(required_limits) / sizeof(required_limits[0]); ++i) {
+            nlohmann::json::const_iterator limit = routing->find(required_limits[i]);
+            if (limit == routing->end() || !limit->is_number_integer() ||
+                limit->get<int>() <= 0) {
+                return reject("recovery trading requires positive integer order limits", error);
+            }
+        }
+        nlohmann::json::const_iterator buy_only = routing->find("buy_only");
+        if (buy_only == routing->end() || !buy_only->is_boolean() || !buy_only->get<bool>()) {
+            return reject("recovery trading requires buy_only=true", error);
+        }
     }
     return true;
 }
@@ -197,7 +223,7 @@ bool validate_config(const nlohmann::json& config, std::string* error) {
             return reject(
                 "allow_invalid_replay_for_analysis requires hp-shadow mode", error);
         }
-        nlohmann::json::const_iterator capture = config.find("mix153060_capture");
+        nlohmann::json::const_iterator capture = find_capture(config);
         if (capture == config.end() || !capture->is_object() ||
             capture->find("enabled") == capture->end() ||
             !capture->at("enabled").is_boolean() ||

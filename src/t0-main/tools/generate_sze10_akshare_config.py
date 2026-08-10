@@ -225,11 +225,14 @@ def main():
             "journal_segment_mb": 1024, "journal_max_payload_bytes": 128,
             "shm_path": shm_path, "state_cpu": 7, "strategy_cpu": 8,
         },
-        "mix153060_capture": {
+        "sze_prediction_capture": {
             "enabled": True, "directory": capture_directory,
             "prefix": "{}_{}".format(args.name, args.target_date), "instruments": symbols,
+            "output_format": "sze_log",
+            "detail_instruments": ["000001.SZ"] if "000001.SZ" in symbols else [],
             "events": True, "samples": True, "capture_only": True,
-            "flush_rows": 1024, "flush_interval_ms": 1000,
+            "flush_rows": 4096, "flush_interval_ms": 1000,
+            "log_batch_bytes": 1048576, "log_queue_bytes": 268435456,
         },
         "global_params": {"offset": 0.8, "quote_offset": 5, "bias_factor": 0.5,
                           "position_limit": 0.3, "global_bias_factor": 1,

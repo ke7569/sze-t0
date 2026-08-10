@@ -78,7 +78,10 @@ StrategyBase::OrderBookRuntimeMode ParseOrderBookRuntimeMode(const json& src_con
     if (market_it != src_config.end() && market_it->is_string()) {
         mode = market_it->get<std::string>();
     } else {
-        json::const_iterator common_it = src_config.find("orderbook_mode");
+        json::const_iterator common_it = src_config.find("mode");
+        if (common_it == src_config.end() || !common_it->is_string()) {
+            common_it = src_config.find("orderbook_mode");
+        }
         if (common_it != src_config.end() && common_it->is_string()) {
             mode = common_it->get<std::string>();
         }
@@ -218,7 +221,10 @@ void LoadTraceInstrumentFilter(const json& src_config,
 
 mix153060::CaptureConfig ParseMix153060CaptureConfig(const json& src_config) {
     mix153060::CaptureConfig result;
-    json::const_iterator capture_it = src_config.find("mix153060_capture");
+    json::const_iterator capture_it = src_config.find("sze_prediction_capture");
+    if (capture_it == src_config.end()) {
+        capture_it = src_config.find("mix153060_capture");
+    }
     if (capture_it == src_config.end() || !capture_it->is_object()) {
         return result;
     }
@@ -242,6 +248,36 @@ mix153060::CaptureConfig ParseMix153060CaptureConfig(const json& src_config) {
                 result.instruments.push_back(item->get<std::string>());
             }
         }
+    }
+    if (result.instruments.empty()) {
+        json::const_iterator params = src_config.find("ins_params");
+        if (params != src_config.end() && params->is_object()) {
+            for (json::const_iterator item = params->begin(); item != params->end(); ++item) {
+                if (item.key().find('.') == std::string::npos) {
+                    result.instruments.push_back(item.key() + ".SZ");
+                } else {
+                    result.instruments.push_back(item.key());
+                }
+            }
+        }
+    }
+    it = capture.find("output_format");
+    if (it != capture.end() && it->is_string()) {
+        result.output_format = it->get<std::string>();
+    }
+    it = capture.find("detail_instruments");
+    if (it != capture.end() && it->is_array()) {
+        for (json::const_iterator item = it->begin(); item != it->end(); ++item) {
+            if (item->is_string()) {
+                result.detail_instruments.push_back(item->get<std::string>());
+            }
+        }
+    }
+    it = capture.find("detail");
+    if (result.detail_instruments.empty() && it != capture.end() &&
+        ((it->is_boolean() && it->get<bool>()) ||
+         (it->is_string() && it->get<std::string>() == "all"))) {
+        result.detail_instruments = result.instruments;
     }
     it = capture.find("events");
     if (it != capture.end() && it->is_boolean()) {
@@ -268,6 +304,14 @@ mix153060::CaptureConfig ParseMix153060CaptureConfig(const json& src_config) {
     } else if (it != capture.end() && it->is_number_integer()) {
         const std::int64_t value = it->get<std::int64_t>();
         result.flush_interval_ms = value > 0 ? static_cast<std::uint32_t>(value) : 0U;
+    }
+    it = capture.find("log_batch_bytes");
+    if (it != capture.end() && it->is_number_unsigned()) {
+        result.log_batch_bytes = static_cast<std::size_t>(it->get<std::uint64_t>());
+    }
+    it = capture.find("log_queue_bytes");
+    if (it != capture.end() && it->is_number_unsigned()) {
+        result.log_queue_bytes = static_cast<std::size_t>(it->get<std::uint64_t>());
     }
     return result;
 }
@@ -519,7 +563,7 @@ StrategyBase::StrategyBase(const std::string &name, json& src_config): IWCStrate
             throw std::runtime_error(
                 "Cannot load Shenzhen model file: " + model_path + ": " + model_error);
         }
-        KF_LOG_INFO(logger, "[SZ][mix153060] model loaded path=" << model_path
+        KF_LOG_INFO(logger, "[SZ][prediction] model loaded path=" << model_path
                            << " checkpoint_sha256=" << mMix153060Model.checkpoint_sha256()
                            << " factor_sha256=" << mMix153060Model.factor_names_sha256());
     }
@@ -612,14 +656,14 @@ StrategyBase::StrategyBase(const std::string &name, json& src_config): IWCStrate
                         "e20ed70098a025f597f8b9cda41fb79b3188d875ad227f243c872ddbfbbed97e" &&
                     (!std::isfinite(mix_inputs.free_share) || mix_inputs.free_share <= 0.0)) {
                     mix_inputs_valid = false;
-                    KF_LOG_ERROR(logger, "[SZ][mix153060] v0.4 requires positive FreeShare instrument="
+                    KF_LOG_ERROR(logger, "[SZ][prediction] v0.4 requires positive FreeShare instrument="
                                          << code << "; add FreeShare/free_share to ins_params");
                 }
                 std::unique_ptr<mix153060::Runtime> runtime(
                     new mix153060::Runtime(mix_inputs));
                 if (!runtime->configured()) {
                     mix_inputs_valid = false;
-                    KF_LOG_ERROR(logger, "[SZ][mix153060] invalid static inputs instrument="
+                    KF_LOG_ERROR(logger, "[SZ][prediction] invalid static inputs instrument="
                                          << code << " date=" << mix_inputs.trading_date
                                          << " average_amount=" << mix_inputs.average_amount
                                          << " free_share=" << mix_inputs.free_share
@@ -638,24 +682,24 @@ StrategyBase::StrategyBase(const std::string &name, json& src_config): IWCStrate
     mMix153060Enabled = mix_model_loaded && mix_inputs_valid && !mMix153060RuntimeMap.empty();
     mHpRealtimeModelReady = mMix153060Enabled;
     if (mix_model_loaded && !mMix153060Enabled) {
-        KF_LOG_ERROR(logger, "[SZ][mix153060] model loaded but runtime inputs are incomplete; "
+        KF_LOG_ERROR(logger, "[SZ][prediction] model loaded but runtime inputs are incomplete; "
                              "state will remain signal-suppressed");
     }
     if (mix_capture_config.enabled) {
         if (!using_hp_mode()) {
             throw std::runtime_error(
-                "mix153060_capture requires Shenzhen hp-shadow or hp-realtime mode");
+                "sze_prediction_capture requires Shenzhen hp-shadow or hp-realtime mode");
         }
         if (!mMix153060Enabled) {
             throw std::runtime_error(
-                "mix153060_capture requires a loaded model and valid daily static inputs");
+                "sze_prediction_capture requires a loaded model and valid daily static inputs");
         }
         mMix153060Capture.reset(new mix153060::Capture(mix_capture_config));
         if (!mMix153060Capture->ready()) {
-            throw std::runtime_error("mix153060_capture initialization failed: " +
+            throw std::runtime_error("sze_prediction_capture initialization failed: " +
                                      mMix153060Capture->error());
         }
-        KF_LOG_INFO(logger, "[SZ][mix153060] capture enabled events="
+        KF_LOG_INFO(logger, "[SZ][prediction] capture enabled events="
                              << mMix153060Capture->events_path()
                              << " samples=" << mMix153060Capture->samples_path()
                              << " market_resolutions="
@@ -672,7 +716,7 @@ StrategyBase::~StrategyBase() {
         mMix153060Capture->flush();
     }
     if (using_hp_mode()) {
-        KF_LOG_INFO(logger, "[SZ][mix153060] shutdown"
+        KF_LOG_INFO(logger, "[SZ][prediction] shutdown"
             << " enabled=" << BoolText(mMix153060Enabled)
             << " adapter_rejects=" << mMix153060AdapterRejectCount
             << " book_rejects=" << mMix153060BookRejectCount
@@ -719,12 +763,22 @@ void StrategyBase::parse_sze_recovery_consumer_config(const json& config) {
     }
     mSzeRecoveryConsumerConfig.allow_invalid_replay_for_analysis =
         item != value.end() && item->is_boolean() && item->get<bool>();
+    item = value.find("trading_enabled");
+    if (item != value.end() && !item->is_boolean()) {
+        throw std::runtime_error("trading_enabled must be boolean");
+    }
+    mSzeRecoveryConsumerConfig.trading_enabled =
+        item != value.end() && item->is_boolean() && item->get<bool>();
     if (!mSzeRecoveryConsumerConfig.enabled) {
         if (mSzeRecoveryConsumerConfig.allow_invalid_replay_for_analysis) {
             throw std::runtime_error(
                 "allow_invalid_replay_for_analysis requires enabled recovery consumer");
         }
         return;
+    }
+
+    if (mSzeRecoveryConsumerConfig.trading_enabled && !using_hp_realtime_mode()) {
+        throw std::runtime_error("recovery trading requires hp-realtime mode");
     }
 
     if (!using_hp_mode()) {
@@ -1103,6 +1157,7 @@ void StrategyBase::sze_recovery_consumer_loop() {
     const std::uint64_t recovery_start_ns = sze_recovery::monotonic_time_ns();
     std::uint64_t last_metric_ns = recovery_start_ns;
     std::uint64_t last_metric_events = 0U;
+    bool live_handoff_logged = false;
     const auto publish_recovery_metrics = [&]() {
         const std::uint64_t now_ns = sze_recovery::monotonic_time_ns();
         if (now_ns < last_metric_ns + 1000000000ULL) {
@@ -1125,6 +1180,20 @@ void StrategyBase::sze_recovery_consumer_loop() {
         const sze_recovery::ReplayReadStatus status = consumer.next(
             &event, raw.data(), raw.size());
         if (status == sze_recovery::kReplayReadWouldBlock) {
+            if (consumer.mode() == sze_recovery::kReplayLive) {
+                mSzeRecoveryReplayContext.store(false, std::memory_order_release);
+                mSzeRecoveryContinuityValid.store(true, std::memory_order_release);
+                mSzeRecoveryLiveReady.store(true, std::memory_order_release);
+                if (!live_handoff_logged) {
+                    live_handoff_logged = true;
+                    KF_LOG_INFO(logger, "[SZRecovery] live handoff ready"
+                        << " events="
+                        << mSzeRecoveryEvents.load(std::memory_order_relaxed)
+                        << " next_event_id=" << consumer.next_event_id()
+                        << " routing_ready=" << BoolText(is_risk_data_ready())
+                        << " idle=1");
+                }
+            }
             publish_recovery_metrics();
             _mm_pause();
             continue;
@@ -1149,6 +1218,13 @@ void StrategyBase::sze_recovery_consumer_loop() {
         mSzeRecoveryReplayContext.store(!live, std::memory_order_release);
         mSzeRecoveryContinuityValid.store(true, std::memory_order_release);
         mSzeRecoveryLiveReady.store(live, std::memory_order_release);
+        if (live && !live_handoff_logged) {
+            live_handoff_logged = true;
+            KF_LOG_INFO(logger, "[SZRecovery] live handoff ready"
+                << " events=" << mSzeRecoveryEvents.load(std::memory_order_relaxed)
+                << " next_event_id=" << consumer.next_event_id()
+                << " routing_ready=" << BoolText(is_risk_data_ready()));
+        }
 
         if (!process_sze_recovery_event(event, raw.data(), event.payload_size)) {
             mSzeRecoveryContinuityValid.store(false, std::memory_order_release);
@@ -1437,7 +1513,7 @@ void StrategyBase::process_mix153060_order(const std::string& code,
             *data, params_it->second.Date, rcv_time, &event, &reason);
         runtime->invalidate();
         ++mMix153060AdapterRejectCount;
-        KF_LOG_ERROR(logger, "[SZ][mix153060] order adapter rejected instrument="
+        KF_LOG_ERROR(logger, "[SZ][prediction] order adapter rejected instrument="
                              << code << " app_sequence=" << data->ApplSeqNum
                              << " reason=" << reason << "; instrument suppressed");
         return;
@@ -1445,9 +1521,11 @@ void StrategyBase::process_mix153060_order(const std::string& code,
     mix153060::SampleBuffer samples;
     const bool capture_enabled = mMix153060Capture.get() != 0 &&
                                  mMix153060Capture->enabled_for(code);
+    const bool capture_detail = capture_enabled &&
+                                mMix153060Capture->detail_enabled_for(code);
     mix153060::EventTiming timing;
-    runtime->on_order(event, &samples, capture_enabled ? &timing : 0);
-    if (capture_enabled) {
+    runtime->on_order(event, &samples, capture_detail ? &timing : 0);
+    if (capture_detail) {
         mix153060::OrderEvent resolved_market;
         bool from_linked_fill = false;
         while (runtime->take_resolved_market_order(&resolved_market, &from_linked_fill)) {
@@ -1471,7 +1549,7 @@ void StrategyBase::process_mix153060_order(const std::string& code,
     }
     if (!runtime->available()) {
         ++mMix153060BookRejectCount;
-        KF_LOG_ERROR(logger, "[SZ][mix153060] order book rejected instrument="
+        KF_LOG_ERROR(logger, "[SZ][prediction] order book rejected instrument="
                              << code << " app_sequence=" << runtime->failure_sequence()
                              << " reason=" << runtime->failure_reason()
                              << "; instrument suppressed");
@@ -1499,7 +1577,7 @@ void StrategyBase::process_mix153060_trade(const std::string& code,
             *data, params_it->second.Date, rcv_time, &event, &reason);
         runtime->invalidate();
         ++mMix153060AdapterRejectCount;
-        KF_LOG_ERROR(logger, "[SZ][mix153060] trade adapter rejected instrument="
+        KF_LOG_ERROR(logger, "[SZ][prediction] trade adapter rejected instrument="
                              << code << " app_sequence=" << data->ApplSeqNum
                              << " reason=" << reason << "; instrument suppressed");
         return;
@@ -1507,9 +1585,11 @@ void StrategyBase::process_mix153060_trade(const std::string& code,
     mix153060::SampleBuffer samples;
     const bool capture_enabled = mMix153060Capture.get() != 0 &&
                                  mMix153060Capture->enabled_for(code);
+    const bool capture_detail = capture_enabled &&
+                                mMix153060Capture->detail_enabled_for(code);
     mix153060::EventTiming timing;
-    runtime->on_trade(event, &samples, capture_enabled ? &timing : 0);
-    if (capture_enabled) {
+    runtime->on_trade(event, &samples, capture_detail ? &timing : 0);
+    if (capture_detail) {
         mix153060::OrderEvent resolved_market;
         bool from_linked_fill = false;
         while (runtime->take_resolved_market_order(&resolved_market, &from_linked_fill)) {
@@ -1533,7 +1613,7 @@ void StrategyBase::process_mix153060_trade(const std::string& code,
     }
     if (!runtime->available()) {
         ++mMix153060BookRejectCount;
-        KF_LOG_ERROR(logger, "[SZ][mix153060] trade book rejected instrument="
+        KF_LOG_ERROR(logger, "[SZ][prediction] trade book rejected instrument="
                              << code << " app_sequence=" << runtime->failure_sequence()
                              << " reason=" << runtime->failure_reason()
                              << "; instrument suppressed");
@@ -1595,23 +1675,25 @@ void StrategyBase::consume_mix153060_samples(const std::string& code,
     }
     const bool capture_enabled = mMix153060Capture.get() != 0 &&
                                  mMix153060Capture->enabled_for(code);
+    const bool capture_detail = capture_enabled &&
+                                mMix153060Capture->detail_enabled_for(code);
     for (std::size_t index = 0; index < samples.count; ++index) {
         const mix153060::Sample& sample = samples.values[index];
         float prediction = 0.0f;
-        const std::uint64_t model_begin = capture_enabled ? sz_hp::latency_now_ns() : 0;
+        const std::uint64_t model_begin = capture_detail ? sz_hp::latency_now_ns() : 0;
         if (!mMix153060Model.predict(sample.factors, &state_it->second, &prediction)) {
             ++mMix153060PredictionRejectCount;
             mix153060::Runtime* runtime = mix153060_runtime_for(code);
             if (runtime != 0) {
                 runtime->invalidate();
             }
-            KF_LOG_ERROR(logger, "[SZ][mix153060] prediction rejected instrument="
+            KF_LOG_ERROR(logger, "[SZ][prediction] prediction rejected instrument="
                                  << code << " row=" << sample.row_in_stock_day
                                  << "; instrument suppressed");
             return;
         }
         if (capture_enabled) {
-            const std::uint64_t model_end = sz_hp::latency_now_ns();
+            const std::uint64_t model_end = capture_detail ? sz_hp::latency_now_ns() : 0;
             mMix153060Capture->record_sample(
                 code, sample, source, static_cast<std::int64_t>(rcv_time), prediction,
                 model_end >= model_begin ? model_end - model_begin : 0,
@@ -1987,10 +2069,10 @@ void StrategyBase::init() {
         << " full_orderbook_latency_log_interval=" << mFullOrderBookLatencyLogInterval
         << " full_orderbook_trace_max_events=" << mFullOrderBookTraceMaxEvents
         << " full_orderbook_trace_filter_size=" << mFullOrderBookTraceInstrumentFilter.size()
-        << " mix153060_enabled=" << BoolText(mMix153060Enabled)
-        << " mix153060_model_loaded=" << BoolText(mMix153060Model.loaded())
-        << " mix153060_runtime_instruments=" << mMix153060RuntimeMap.size()
-        << " mix153060_capture_only=" << BoolText(mMix153060CaptureOnly)
+        << " prediction_enabled=" << BoolText(mMix153060Enabled)
+        << " prediction_model_loaded=" << BoolText(mMix153060Model.loaded())
+        << " prediction_runtime_instruments=" << mMix153060RuntimeMap.size()
+        << " prediction_capture_only=" << BoolText(mMix153060CaptureOnly)
         << " hp_realtime_model_ready=" << BoolText(mHpRealtimeModelReady)
         << " instruments=" << mInstrumentVec.size());
     if (!using_hp_shadow_mode() && !mMix153060CaptureOnly) {
@@ -2322,6 +2404,19 @@ void StrategyBase::on_rtn_pos_option(const LFRspPositionField* data, bool isLast
     if (it == mPendingPositionRid.end() || it->second != request_id) {
         mEarlyPositionRid[source] = request_id;
         return;
+    }
+    if (mSzeLiveRoutingEnabled) {
+        for (std::unordered_map<std::string, ZStrategy*>::iterator strategy_it =
+                 mZStrategyMap.begin(); strategy_it != mZStrategyMap.end(); ++strategy_it) {
+            if (strategy_it->second != nullptr &&
+                mSzeLivePositionReady.find(strategy_it->first) ==
+                    mSzeLivePositionReady.end()) {
+                strategy_it->second->sync_startup_position(0, 0);
+                mSzeLivePositionReady.insert(strategy_it->first);
+                KF_LOG_INFO(logger, "[RiskInit][Position] missing instrument treated as zero"
+                    << " source=" << source << " instrument=" << strategy_it->first);
+            }
+        }
     }
     mPositionReady[source] = true;
     KF_LOG_INFO(logger, "[RiskInit] position ready source=" << source

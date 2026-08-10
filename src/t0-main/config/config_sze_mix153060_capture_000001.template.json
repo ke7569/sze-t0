@@ -18,15 +18,20 @@
       "last_position": 0
     }
   },
-  "mix153060_capture": {
+  "sze_prediction_capture": {
     "enabled": true,
     "directory": "/home/t0/run_main/log/sze_mix153060_000001",
     "prefix": "000001_{target_date}",
     "instruments": ["000001.SZ"],
+    "output_format": "sze_log",
+    "detail_instruments": ["000001.SZ"],
     "events": true,
     "samples": true,
     "capture_only": true,
-    "flush_rows": 4096
+    "flush_rows": 4096,
+    "flush_interval_ms": 1000,
+    "log_batch_bytes": 1048576,
+    "log_queue_bytes": 268435456
   },
   "global_params": {
     "offset": 0.8,
