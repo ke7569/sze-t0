@@ -1,5 +1,6 @@
 build/
 build_*/
+Testing/
 .cache/
 __pycache__/
 *.pyc
@@ -23,3 +24,10 @@ artifacts/
 modules/deepwin_guoxin/api/include/atp_quant_*.h
 modules/deepwin_guoxin/api/lib/*
 reference/sz_md_recv/sze_l1_snapshot_collector
+reference/sz_md_recv/*.pre_*
+reference/snapshot_legacy15/benchmark_sze_snapshot_legacy15
+reference/snapshot_legacy15/sze_snapshot_legacy15_predictor
+reference/snapshot_legacy15/validate_sze_snapshot_legacy15
+reference/snapshot_legacy15/*.eigen_dynamic_*
+reference/snapshot_legacy15/*.scalar_*
+reference/snapshot_legacy15/*.pre_*
