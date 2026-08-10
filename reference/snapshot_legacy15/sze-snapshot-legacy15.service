@@ -1,0 +1,22 @@
+[Unit]
+Description=SZE Snapshot Legacy15 prediction sidecar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/zane/snapshot-legacy15-sze
+ExecStart=/home/zane/t0-sze/reference/snapshot_legacy15/sze_snapshot_legacy15_predictor \
+  --group 239.35.80.1 --port 37100 --iface-ip 11.11.11.11 --ifname hqh-p1-k2 \
+  --weights /home/zane/snapshot-legacy15-sze/model/snapshot_legacy15.bin \
+  --scaler /home/zane/snapshot-legacy15-sze/model/scaler.json \
+  --output /home/zane/snapshot-legacy15-sze/output/sze_snapshot_legacy15_predictions.csv
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

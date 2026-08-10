@@ -195,6 +195,19 @@ uint64_t realtime_ns()
     return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + ts.tv_nsec;
 }
 
+bool decode_source88_snapshot(const void* record, std::size_t length,
+                              LFMarketDataField* value)
+{
+    if (length != sze_md::kSnapshotRecordSize) return false;
+    auto* wire = const_cast<sze_md::SzeHpfSnapshot*>(
+        static_cast<const sze_md::SzeHpfSnapshot*>(record));
+    const std::uint64_t sequence_num = wire->head.sequence_num;
+    if (sequence_num == 0) wire->head.sequence_num = 1;
+    const bool decoded = sze_md::decode_snapshot(wire, length, value);
+    wire->head.sequence_num = sequence_num;
+    return decoded;
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -246,7 +259,7 @@ int main(int argc, char** argv)
             if (head->message_type == sze_md::kSnapshotMessage) {
                 LFMarketDataField value{};
                 const auto* wire = reinterpret_cast<const sze_md::SzeHpfSnapshot*>(packet.data() + offset);
-                if (!sze_md::decode_snapshot(wire, record_size, &value)) {
+                if (!decode_source88_snapshot(wire, record_size, &value)) {
                     ++malformed;
                 } else {
                     write_snapshot(out, realtime_ns(), *wire, value);
