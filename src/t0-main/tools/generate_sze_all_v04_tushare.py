@@ -221,7 +221,7 @@ def main(argv=None):
         "sze_recovery_consumer": {
             "enabled": True, "trading_day": int(target), "source_id": 88,
             "journal_directory": "/home/zane/data/sze_journal_{}".format(target),
-            "journal_prefix": "sze_all", "journal_segment_mb": 1024,
+            "journal_prefix": "sze_all", "journal_segment_mb": 4096,
             "journal_max_payload_bytes": 128,
             "shm_path": "/dev/shm/sze_all_{}.events".format(target),
             "state_cpu": 7, "strategy_cpu": 8,

@@ -131,7 +131,7 @@ def main():
         "source_id": 88,
         "journal_directory": args.journal_directory,
         "journal_prefix": args.journal_prefix,
-        "journal_segment_mb": 1024,
+        "journal_segment_mb": 4096,
         "journal_max_payload_bytes": 128,
         "shm_path": args.shm_path,
         "state_cpu": args.state_cpu,
