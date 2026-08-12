@@ -21,6 +21,7 @@
 #include <limits>
 #include <algorithm>
 #include <stdexcept>
+#include <cstdio>
 
 #ifdef T0_SZE_STRATEGY_ONLY
 #include "SZEProtocol.h"
@@ -59,6 +60,62 @@ double MixMarketTimeValue(int64_t exchange_time_us) {
     const int64_t millisecond = (tod % 1000000LL) / 1000LL;
     return static_cast<double>(hour * 10000000LL + minute * 100000LL +
                                second * 1000LL + millisecond);
+}
+
+std::uint64_t SnapshotExchangeTimeMs(const LFMarketDataField& value) {
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    if (std::sscanf(value.UpdateTime, "%d:%d:%d", &hour, &minute, &second) != 3 ||
+        hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+        second < 0 || second > 59 || value.UpdateMillisec < 0 ||
+        value.UpdateMillisec > 999) {
+        return 0;
+    }
+    return (static_cast<std::uint64_t>(hour) * 3600U +
+            static_cast<std::uint64_t>(minute) * 60U +
+            static_cast<std::uint64_t>(second)) * 1000U +
+           static_cast<std::uint64_t>(value.UpdateMillisec);
+}
+
+std::uint64_t ExchangeTimeOfDayUs(std::int64_t exchange_time_us) {
+    const std::int64_t day_us = 86400000000LL;
+    std::int64_t value = exchange_time_us % day_us;
+    if (value < 0) {
+        value += day_us;
+    }
+    return static_cast<std::uint64_t>(value);
+}
+
+std::uint32_t ParseTradingDay(const std::string& value) {
+    if (value.size() != 8U) {
+        return 0U;
+    }
+    std::uint32_t result = 0U;
+    for (std::string::const_iterator it = value.begin(); it != value.end(); ++it) {
+        if (*it < '0' || *it > '9') {
+            return 0U;
+        }
+        result = result * 10U + static_cast<std::uint32_t>(*it - '0');
+    }
+    return result;
+}
+
+sze_snapshot15::Snapshot SnapshotLegacy15FromLf(const LFMarketDataField& value) {
+    sze_snapshot15::Snapshot snapshot;
+    snapshot.symbol = NormalizeInstrumentId(value.InstrumentID);
+    snapshot.trading_day = value.TradingDay;
+    snapshot.exchange_time_ms = SnapshotExchangeTimeMs(value);
+    snapshot.last_price = value.LastPrice;
+    snapshot.volume = value.Volume;
+    snapshot.turnover = value.Turnover;
+    for (std::size_t level = 0; level < 5; ++level) {
+        snapshot.bid_prices[level] = value.aBidPrice[level];
+        snapshot.ask_prices[level] = value.aAskPrice[level];
+        snapshot.bid_volumes[level] = value.aBidVolume[level];
+        snapshot.ask_volumes[level] = value.aAskVolume[level];
+    }
+    return snapshot;
 }
 
 const uint32_t kContinuousAuctionStartMs = 9U * 3600000U + 26U * 60000U;
@@ -487,6 +544,46 @@ StrategyBase::StrategyBase(const std::string &name, json& src_config): IWCStrate
 #ifdef T0_SZE_STRATEGY_ONLY
     parse_sze_recovery_consumer_config(src_config);
 #endif
+    json::const_iterator snapshot_config = src_config.find("snapshot_legacy15");
+    if (snapshot_config != src_config.end()) {
+        if (!snapshot_config->is_object()) {
+            throw std::runtime_error("snapshot_legacy15 must be an object");
+        }
+        mSnapshotLegacy15Enabled = snapshot_config->value("enabled", false);
+        mSnapshotLegacy15Source = static_cast<short>(
+            snapshot_config->value("source_id", 90));
+        if (mSnapshotLegacy15Enabled) {
+            if (mMarket != "SZ") {
+                throw std::runtime_error("snapshot_legacy15 requires market=SZ");
+            }
+            const std::string snapshot_model_path =
+                snapshot_config->value("model_path", std::string());
+            const std::string snapshot_scaler_path =
+                snapshot_config->value("scaler_path", std::string());
+            if (snapshot_model_path.empty() || snapshot_scaler_path.empty()) {
+                throw std::runtime_error(
+                    "snapshot_legacy15 requires model_path and scaler_path");
+            }
+            std::string snapshot_error;
+            if (!mSnapshotLegacy15Model.load(
+                    snapshot_model_path, snapshot_scaler_path, &snapshot_error)) {
+                throw std::runtime_error(
+                    "snapshot_legacy15 model load failed: " + snapshot_error);
+            }
+            for (std::vector<std::string>::const_iterator code = mInstrumentVec.begin();
+                 code != mInstrumentVec.end(); ++code) {
+                mSnapshotLegacy15StateMap.emplace(
+                    *code, SnapshotLegacy15RuntimeState());
+                mSnapshotLegacy15SignalViewMap.emplace(
+                    *code, std::unique_ptr<MSMarketDataField>(
+                        new MSMarketDataField(NewMixSignalView())));
+            }
+            KF_LOG_INFO(logger, "[SZSnapshotFallback] enabled=1 source="
+                << mSnapshotLegacy15Source
+                << " instruments=" << mInstrumentVec.size()
+                << " recovery_required=0");
+        }
+    }
     const mix153060::CaptureConfig mix_capture_config =
         ParseMix153060CaptureConfig(src_config);
     mMix153060CaptureOnly = mix_capture_config.enabled && mix_capture_config.capture_only;
@@ -722,6 +819,11 @@ StrategyBase::~StrategyBase() {
             << " book_rejects=" << mMix153060BookRejectCount
             << " prediction_rejects=" << mMix153060PredictionRejectCount);
     }
+    if (mSnapshotLegacy15Enabled) {
+        KF_LOG_INFO(logger, "[SZSnapshotFallback] shutdown predictions="
+            << mSnapshotLegacy15PredictionCount
+            << " rejects=" << mSnapshotLegacy15RejectCount);
+    }
     dump_full_orderbook_latency_summary();
 }
 
@@ -880,6 +982,9 @@ void StrategyBase::start_sze_recovery_consumer() {
     mSzeRecoveryConsumerAttached.store(false, std::memory_order_release);
     mSzeTradingSignalHead.store(0U, std::memory_order_relaxed);
     mSzeTradingSignalTail.store(0U, std::memory_order_relaxed);
+    mSzeSnapshotSignalHead.store(0U, std::memory_order_relaxed);
+    mSzeSnapshotSignalTail.store(0U, std::memory_order_relaxed);
+    mSzePredictionSignalStateMap.clear();
     mSzeTradingQueueHealthy.store(true, std::memory_order_release);
     mSzeRecoveryReplayContext.store(true, std::memory_order_release);
     mSzeRecoveryContinuityValid.store(false, std::memory_order_release);
@@ -1250,44 +1355,151 @@ bool StrategyBase::enqueue_sze_trading_signal(
     const MSMarketDataField* market_data,
     double prediction,
     short source,
-    long receive_time) {
+    long receive_time,
+    sze_prediction::Source prediction_source,
+    std::uint32_t trading_day,
+    std::uint64_t exchange_time_us) {
     if (market_data == 0 || code.empty() || code.size() >= 16U) {
         return false;
     }
-    const std::uint64_t head =
-        mSzeTradingSignalHead.load(std::memory_order_relaxed);
-    const std::uint64_t tail =
-        mSzeTradingSignalTail.load(std::memory_order_acquire);
+    const bool snapshot = prediction_source == sze_prediction::kSnapshot;
+    std::atomic<std::uint64_t>& head_counter = snapshot
+        ? mSzeSnapshotSignalHead : mSzeTradingSignalHead;
+    std::atomic<std::uint64_t>& tail_counter = snapshot
+        ? mSzeSnapshotSignalTail : mSzeTradingSignalTail;
+    std::array<SzeTradingSignal, kSzeTradingSignalCapacity>& slots = snapshot
+        ? mSzeSnapshotSignalSlots : mSzeTradingSignalSlots;
+    const std::uint64_t head = head_counter.load(std::memory_order_relaxed);
+    const std::uint64_t tail = tail_counter.load(std::memory_order_acquire);
     if (head - tail >= kSzeTradingSignalCapacity) {
         return false;
     }
-    SzeTradingSignal& slot =
-        mSzeTradingSignalSlots[head & (kSzeTradingSignalCapacity - 1U)];
+    SzeTradingSignal& slot = slots[
+        head & (kSzeTradingSignalCapacity - 1U)];
     slot.market_data = market_data->ms_market_data.ms_market_data;
     std::memset(slot.instrument, 0, sizeof(slot.instrument));
     std::memcpy(slot.instrument, code.data(), code.size());
     slot.prediction = prediction;
     slot.source = source;
     slot.receive_time = receive_time;
-    mSzeTradingSignalHead.store(head + 1U, std::memory_order_release);
+    slot.prediction_source = prediction_source;
+    slot.trading_day = trading_day;
+    slot.exchange_time_us = exchange_time_us;
+    slot.turnover = market_data->Turnover;
+    slot.queue_sequence = head + 1U;
+    head_counter.store(head + 1U, std::memory_order_release);
     return true;
 }
 
-bool StrategyBase::dequeue_sze_trading_signal(SzeTradingSignal* signal) {
+bool StrategyBase::dequeue_sze_trading_signal(
+    sze_prediction::Source prediction_source,
+    SzeTradingSignal* signal) {
     if (signal == 0) {
         return false;
     }
-    const std::uint64_t tail =
-        mSzeTradingSignalTail.load(std::memory_order_relaxed);
-    const std::uint64_t head =
-        mSzeTradingSignalHead.load(std::memory_order_acquire);
+    const bool snapshot = prediction_source == sze_prediction::kSnapshot;
+    std::atomic<std::uint64_t>& head_counter = snapshot
+        ? mSzeSnapshotSignalHead : mSzeTradingSignalHead;
+    std::atomic<std::uint64_t>& tail_counter = snapshot
+        ? mSzeSnapshotSignalTail : mSzeTradingSignalTail;
+    std::array<SzeTradingSignal, kSzeTradingSignalCapacity>& slots = snapshot
+        ? mSzeSnapshotSignalSlots : mSzeTradingSignalSlots;
+    const std::uint64_t tail = tail_counter.load(std::memory_order_relaxed);
+    const std::uint64_t head = head_counter.load(std::memory_order_acquire);
     if (tail == head) {
         return false;
     }
-    *signal = mSzeTradingSignalSlots[
-        tail & (kSzeTradingSignalCapacity - 1U)];
-    mSzeTradingSignalTail.store(tail + 1U, std::memory_order_release);
+    *signal = slots[tail & (kSzeTradingSignalCapacity - 1U)];
+    tail_counter.store(tail + 1U, std::memory_order_release);
     return true;
+}
+
+bool StrategyBase::update_sze_prediction_candidate(
+    const SzeTradingSignal& signal) {
+    const std::string code(signal.instrument);
+    std::unordered_map<std::string, SzePredictionSignalState>::iterator state_it =
+        mSzePredictionSignalStateMap.find(code);
+    if (state_it == mSzePredictionSignalStateMap.end()) {
+        state_it = mSzePredictionSignalStateMap.emplace(
+            code, SzePredictionSignalState()).first;
+    }
+    SzePredictionSignalState& state = state_it->second;
+    sze_prediction::Candidate candidate;
+    candidate.source = signal.prediction_source;
+    candidate.trading_day = signal.trading_day;
+    candidate.exchange_time_us = signal.exchange_time_us;
+    candidate.turnover = signal.turnover;
+    candidate.sequence = signal.queue_sequence;
+    candidate.valid = true;
+    if (!state.arbiter.update(candidate)) {
+        return false;
+    }
+    if (signal.prediction_source == sze_prediction::kSnapshot) {
+        state.snapshot = signal;
+        state.has_snapshot = true;
+    } else {
+        state.full_orderbook = signal;
+        state.has_full_orderbook = true;
+    }
+    return true;
+}
+
+void StrategyBase::dispatch_sze_prediction_candidate(const std::string& code) {
+    std::unordered_map<std::string, SzePredictionSignalState>::iterator state_it =
+        mSzePredictionSignalStateMap.find(code);
+    if (state_it == mSzePredictionSignalStateMap.end()) {
+        return;
+    }
+    SzePredictionSignalState& state = state_it->second;
+    const bool full_runtime_valid =
+        mSzeRecoveryLiveReady.load(std::memory_order_acquire) &&
+        mSzeRecoveryContinuityValid.load(std::memory_order_acquire) &&
+        !mSzeRecoveryReplayContext.load(std::memory_order_acquire);
+    const sze_prediction::Selection selected =
+        state.arbiter.select(full_runtime_valid);
+    if (!state.arbiter.should_dispatch(selected) || !is_risk_data_ready() ||
+        !mSzeTradingQueueHealthy.load(std::memory_order_acquire)) {
+        return;
+    }
+    const SzeTradingSignal* chosen = 0;
+    if (selected.source == sze_prediction::kSnapshot && state.has_snapshot) {
+        chosen = &state.snapshot;
+    } else if (selected.source == sze_prediction::kFullOrderBook &&
+               state.has_full_orderbook) {
+        chosen = &state.full_orderbook;
+    }
+    if (chosen == 0) {
+        return;
+    }
+    std::unordered_map<std::string, ZStrategy*>::iterator strategy_it =
+        mZStrategyMap.find(code);
+    if (strategy_it == mZStrategyMap.end() || strategy_it->second == 0) {
+        return;
+    }
+    MSMarketDataField market_data = {MSMarketData()};
+    market_data.ms_market_data.ms_market_data = chosen->market_data;
+    strategy_it->second->on_signal(
+        &market_data, chosen->prediction, chosen->source,
+        chosen->receive_time);
+    state.arbiter.mark_dispatched(selected);
+    ++state.dispatch_count;
+    if (!state.has_selected_source ||
+        state.selected_source != selected.source ||
+        state.dispatch_count % 10000U == 0U) {
+        KF_LOG_INFO(logger, "[SZPredictionArbiter] instrument=" << code
+            << " selected="
+            << (selected.source == sze_prediction::kFullOrderBook
+                    ? "full_orderbook" : "snapshot")
+            << " full_turnover="
+            << (state.has_full_orderbook
+                    ? state.full_orderbook.turnover : -1.0)
+            << " snapshot_turnover="
+            << (state.has_snapshot ? state.snapshot.turnover : -1.0)
+            << " full_runtime_valid=" << (full_runtime_valid ? 1 : 0)
+            << " dispatch_count=" << state.dispatch_count);
+    }
+    state.selected_source = selected.source;
+    state.has_selected_source = true;
 }
 
 void StrategyBase::dispatch_or_queue_trading_signal(
@@ -1295,17 +1507,25 @@ void StrategyBase::dispatch_or_queue_trading_signal(
     const MSMarketDataField* market_data,
     double prediction,
     short source,
-    long receive_time) {
-    if (!can_dispatch_trading_signal()) {
+    long receive_time,
+    sze_prediction::Source prediction_source,
+    std::uint32_t trading_day,
+    std::uint64_t exchange_time_us) {
+    const bool snapshot = prediction_source == sze_prediction::kSnapshot;
+    if (!is_risk_data_ready() || mSzeRecoveryAnalysisMode ||
+        !mSzeTradingQueueHealthy.load(std::memory_order_acquire) ||
+        (!snapshot && !can_dispatch_trading_signal())) {
         return;
     }
     if (mSzeRecoveryConsumerConfig.enabled) {
         if (!enqueue_sze_trading_signal(
-                code, market_data, prediction, source, receive_time)) {
+                code, market_data, prediction, source, receive_time,
+                prediction_source, trading_day, exchange_time_us)) {
             mSzeTradingQueueHealthy.store(false, std::memory_order_release);
             mSzeRecoveryLiveReady.store(false, std::memory_order_release);
-            KF_LOG_ERROR(logger, "[SZRecovery] trading signal queue overrun; "
-                "signal dispatch disabled for the session");
+            KF_LOG_ERROR(logger, "[SZPredictionArbiter] "
+                << (snapshot ? "snapshot" : "full_orderbook")
+                << " queue overrun; signal dispatch disabled for the session");
         }
         return;
     }
@@ -1324,34 +1544,40 @@ void StrategyBase::sze_trading_poll_loop() {
     const int affinity_status = ::pthread_setaffinity_np(
         ::pthread_self(), sizeof(cpu_set), &cpu_set);
     if (affinity_status != 0) {
-        mSzeTradingQueueHealthy.store(false, std::memory_order_release);
-        mSzeRecoveryLiveReady.store(false, std::memory_order_release);
         KF_LOG_ERROR(logger, "[SZRecovery] failed to bind strategy poll thread"
             << " cpu=" << mSzeRecoveryConsumerConfig.strategy_cpu
-            << " status=" << affinity_status);
-        return;
+            << " status=" << affinity_status
+            << "; continuing without affinity");
     }
     KF_LOG_INFO(logger, "[SZRecovery] strategy poll thread started"
         << " cpu=" << mSzeRecoveryConsumerConfig.strategy_cpu);
     while (mSzeTradingPollRunning.load(std::memory_order_acquire)) {
         SzeTradingSignal signal;
-        if (!dequeue_sze_trading_signal(&signal)) {
+        bool consumed = false;
+        std::string full_code;
+        std::string snapshot_code;
+        if (dequeue_sze_trading_signal(
+                sze_prediction::kFullOrderBook, &signal)) {
+            if (update_sze_prediction_candidate(signal)) {
+                full_code = signal.instrument;
+            }
+            consumed = true;
+        }
+        if (dequeue_sze_trading_signal(sze_prediction::kSnapshot, &signal)) {
+            if (update_sze_prediction_candidate(signal)) {
+                snapshot_code = signal.instrument;
+            }
+            consumed = true;
+        }
+        if (!full_code.empty()) {
+            dispatch_sze_prediction_candidate(full_code);
+        }
+        if (!snapshot_code.empty() && snapshot_code != full_code) {
+            dispatch_sze_prediction_candidate(snapshot_code);
+        }
+        if (!consumed) {
             _mm_pause();
-            continue;
         }
-        if (!can_dispatch_trading_signal()) {
-            continue;
-        }
-        std::unordered_map<std::string, ZStrategy*>::iterator strategy_it =
-            mZStrategyMap.find(signal.instrument);
-        if (strategy_it == mZStrategyMap.end() || strategy_it->second == 0) {
-            continue;
-        }
-        MSMarketDataField market_data = {MSMarketData()};
-        market_data.ms_market_data.ms_market_data = signal.market_data;
-        strategy_it->second->on_signal(
-            &market_data, signal.prediction, signal.source,
-            signal.receive_time);
     }
     KF_LOG_INFO(logger, "[SZRecovery] strategy poll thread stopped");
 }
@@ -1714,7 +1940,10 @@ void StrategyBase::consume_mix153060_samples(const std::string& code,
         }
 #ifdef T0_SZE_STRATEGY_ONLY
         dispatch_or_queue_trading_signal(
-            code, view, prediction, source, rcv_time);
+            code, view, prediction, source, rcv_time,
+            sze_prediction::kFullOrderBook,
+            mSzeRecoveryConsumerConfig.trading_day,
+            ExchangeTimeOfDayUs(sample.exchange_time_us));
 #else
         std::unordered_map<std::string, ZStrategy*>::iterator strategy_it =
             mZStrategyMap.find(code);
@@ -2437,8 +2666,96 @@ void StrategyBase::update_info(const char* InstrumentID, short source, long rcv_
 }
 
 void StrategyBase::on_market_data(const struct LFMarketDataField *mds, short source, long rcv_time) {
-    // SZ市场主要使用on_l2_trade和on_l2_order，on_market_data可能不会被调�?    // 如果需要处理LFMarketDataField，可以在这里实现转换逻辑
+    if (!mSnapshotLegacy15Enabled || mds == 0 ||
+        source != mSnapshotLegacy15Source) {
+        return;
+    }
+    const std::string code = NormalizeInstrumentId(mds->InstrumentID);
+    std::unordered_map<std::string, SnapshotLegacy15RuntimeState>::iterator state_it =
+        mSnapshotLegacy15StateMap.find(code);
+    std::unordered_map<std::string, std::unique_ptr<MSMarketDataField> >::iterator view_it =
+        mSnapshotLegacy15SignalViewMap.find(code);
+    if (state_it == mSnapshotLegacy15StateMap.end() ||
+        view_it == mSnapshotLegacy15SignalViewMap.end() ||
+        view_it->second.get() == 0) {
+        return;
+    }
+    const sze_snapshot15::Snapshot current = SnapshotLegacy15FromLf(*mds);
+    if (current.exchange_time_ms == 0 || current.bid_prices[0] <= 0.0 ||
+        current.ask_prices[0] <= 0.0 || current.ask_prices[0] < current.bid_prices[0]) {
+        ++mSnapshotLegacy15RejectCount;
+        return;
+    }
+    SnapshotLegacy15RuntimeState& state = state_it->second;
+    if (state.trading_day != current.trading_day) {
+        state = SnapshotLegacy15RuntimeState();
+        state.trading_day = current.trading_day;
+    }
+    bool predicted = false;
+    float prediction = 0.0f;
+    if (state.has_previous &&
+        current.exchange_time_ms > state.previous.exchange_time_ms &&
+        current.exchange_time_ms - state.previous.exchange_time_ms <= 4000U &&
+        current.volume >= state.previous.volume &&
+        current.turnover >= state.previous.turnover) {
+        std::array<float, 36> factors;
+        std::string error;
+        if (sze_snapshot15::build_factors(state.previous, current, &factors) &&
+            mSnapshotLegacy15Model.predict(
+                factors, &state.hidden, &prediction, &error) &&
+            std::isfinite(prediction)) {
+            predicted = true;
+        } else {
+            ++mSnapshotLegacy15RejectCount;
+        }
+    }
+    state.previous = current;
+    state.has_previous = true;
+    if (!predicted) {
+        return;
+    }
 
+    MSMarketData& view = view_it->second->ms_market_data;
+    view = MSMarketData();
+    view.ms_market_data[InstrumentIDIndex] = std::strtod(code.c_str(), 0);
+    view.ms_market_data[MarketTimeIndex] =
+        static_cast<double>((current.exchange_time_ms / 3600000U) * 10000000U +
+        ((current.exchange_time_ms / 60000U) % 60U) * 100000U +
+        ((current.exchange_time_ms / 1000U) % 60U) * 1000U +
+        current.exchange_time_ms % 1000U);
+    view.ms_market_data[LastPriceIndex] = current.last_price;
+    view.ms_market_data[MidPriceIndex] =
+        (current.bid_prices[0] + current.ask_prices[0]) * 0.5;
+    view.ms_market_data[VolumeIndex] = current.volume;
+    view.ms_market_data[TurnoverIndex] = current.turnover;
+    for (std::size_t level = 0; level < 10; ++level) {
+        view.ms_market_data[BidPrice1Index + level] = mds->aBidPrice[level];
+        view.ms_market_data[AskPrice1Index + level] = mds->aAskPrice[level];
+        view.ms_market_data[BidVolume1Index + level] = mds->aBidVolume[level];
+        view.ms_market_data[AskVolume1Index + level] = mds->aAskVolume[level];
+    }
+    ++mSnapshotLegacy15PredictionCount;
+    if (mSnapshotLegacy15PredictionCount == 1U ||
+        mSnapshotLegacy15PredictionCount % 10000U == 0U) {
+        KF_LOG_INFO(logger, "[SZSnapshotFallback] prediction_count="
+            << mSnapshotLegacy15PredictionCount
+            << " instrument=" << code
+            << " prediction_permille=" << prediction
+            << " exchange_time_ms=" << current.exchange_time_ms);
+    }
+#ifdef T0_SZE_STRATEGY_ONLY
+    dispatch_or_queue_trading_signal(
+        code, view_it->second.get(), prediction, source, rcv_time,
+        sze_prediction::kSnapshot, ParseTradingDay(current.trading_day),
+        current.exchange_time_ms * 1000U);
+#else
+    std::unordered_map<std::string, ZStrategy*>::iterator strategy_it =
+        mZStrategyMap.find(code);
+    if (strategy_it != mZStrategyMap.end() && strategy_it->second != 0) {
+        strategy_it->second->on_signal(
+            view_it->second.get(), prediction, source, rcv_time);
+    }
+#endif
 }
 
 void StrategyBase::on_ms_market_data(const MSMarketDataField *mds, short source, long rcv_time) {

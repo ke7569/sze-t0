@@ -19,6 +19,8 @@
 #include "../shsz_predictor_transition_adapter.h"
 #include "../sz_hp_factor_adapter.h"
 #include "../sz_hp_realtime_state.h"
+#include "snapshot_legacy15_factors.h"
+#include "snapshot_legacy15_model.h"
 #include <unordered_set>
 #include <array>
 #include <atomic>
@@ -28,6 +30,7 @@
 
 #ifdef T0_SZE_STRATEGY_ONLY
 #include "SZERecoverable.h"
+#include "sze_prediction_arbiter.h"
 #endif
 
 struct InsParams {
@@ -193,6 +196,22 @@ private:
     void request_startup_risk_state();
     bool is_risk_data_ready() const;
 
+    struct SnapshotLegacy15RuntimeState {
+        sze_snapshot15::Snapshot previous;
+        sze_snapshot15::State hidden;
+        bool has_previous = false;
+        std::string trading_day;
+    };
+    bool mSnapshotLegacy15Enabled = false;
+    short mSnapshotLegacy15Source = 90;
+    sze_snapshot15::Model mSnapshotLegacy15Model;
+    std::unordered_map<std::string, SnapshotLegacy15RuntimeState>
+        mSnapshotLegacy15StateMap;
+    std::unordered_map<std::string, std::unique_ptr<MSMarketDataField> >
+        mSnapshotLegacy15SignalViewMap;
+    std::uint64_t mSnapshotLegacy15PredictionCount = 0;
+    std::uint64_t mSnapshotLegacy15RejectCount = 0;
+
 #ifdef T0_SZE_STRATEGY_ONLY
     struct SzeRecoveryConsumerConfig {
         bool enabled = false;
@@ -215,6 +234,23 @@ private:
         double prediction;
         short source;
         long receive_time;
+        sze_prediction::Source prediction_source;
+        std::uint32_t trading_day;
+        std::uint64_t exchange_time_us;
+        double turnover;
+        std::uint64_t queue_sequence;
+    };
+
+    struct SzePredictionSignalState {
+        sze_prediction::Arbiter arbiter;
+        SzeTradingSignal full_orderbook;
+        SzeTradingSignal snapshot;
+        bool has_full_orderbook = false;
+        bool has_snapshot = false;
+        bool has_selected_source = false;
+        sze_prediction::Source selected_source =
+            sze_prediction::kFullOrderBook;
+        std::uint64_t dispatch_count = 0;
     };
 
     void parse_sze_recovery_consumer_config(const json& config);
@@ -231,13 +267,22 @@ private:
                                     const MSMarketDataField* market_data,
                                     double prediction,
                                     short source,
-                                    long receive_time);
-    bool dequeue_sze_trading_signal(SzeTradingSignal* signal);
+                                    long receive_time,
+                                    sze_prediction::Source prediction_source,
+                                    std::uint32_t trading_day,
+                                    std::uint64_t exchange_time_us);
+    bool dequeue_sze_trading_signal(sze_prediction::Source prediction_source,
+                                    SzeTradingSignal* signal);
+    bool update_sze_prediction_candidate(const SzeTradingSignal& signal);
+    void dispatch_sze_prediction_candidate(const std::string& code);
     void dispatch_or_queue_trading_signal(const std::string& code,
                                           const MSMarketDataField* market_data,
                                           double prediction,
                                           short source,
-                                          long receive_time);
+                                          long receive_time,
+                                          sze_prediction::Source prediction_source,
+                                          std::uint32_t trading_day,
+                                          std::uint64_t exchange_time_us);
 
     SzeRecoveryConsumerConfig mSzeRecoveryConsumerConfig;
     static const std::uint64_t kSzeTradingSignalCapacity = 1024U;
@@ -245,6 +290,12 @@ private:
         mSzeTradingSignalSlots;
     alignas(64) std::atomic<std::uint64_t> mSzeTradingSignalHead{0};
     alignas(64) std::atomic<std::uint64_t> mSzeTradingSignalTail{0};
+    std::array<SzeTradingSignal, kSzeTradingSignalCapacity>
+        mSzeSnapshotSignalSlots;
+    alignas(64) std::atomic<std::uint64_t> mSzeSnapshotSignalHead{0};
+    alignas(64) std::atomic<std::uint64_t> mSzeSnapshotSignalTail{0};
+    std::unordered_map<std::string, SzePredictionSignalState>
+        mSzePredictionSignalStateMap;
     std::atomic<bool> mSzeTradingQueueHealthy{true};
     std::atomic<bool> mSzeRecoveryConsumerRunning{false};
     std::atomic<bool> mSzeRecoveryConsumerEntered{false};

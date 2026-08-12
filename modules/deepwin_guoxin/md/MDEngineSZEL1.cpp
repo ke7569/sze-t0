@@ -167,7 +167,16 @@ void MDEngineSZEL1::worker_loop(std::size_t index) {
             if (record_size == 0U || offset + record_size > static_cast<std::size_t>(length)) { ++malformed_; break; }
             if (head->message_type == sze_md::kSnapshotMessage) {
                 LFMarketDataField snapshot = {};
-                if (!sze_md::decode_snapshot(packet.data() + offset, record_size, &snapshot)) ++malformed_;
+                sze_md::SzeHpfSnapshot* wire =
+                    reinterpret_cast<sze_md::SzeHpfSnapshot*>(packet.data() + offset);
+                const std::uint64_t sequence_num = wire->head.sequence_num;
+                if (sequence_num == 0U) {
+                    wire->head.sequence_num = 1U;
+                }
+                const bool decoded =
+                    sze_md::decode_snapshot(wire, record_size, &snapshot);
+                wire->head.sequence_num = sequence_num;
+                if (!decoded) ++malformed_;
                 else if (!should_forward(snapshot.InstrumentID)) ++filtered_;
                 else { ++snapshots_; on_market_data(&snapshot); }
             } else ++ignored_;

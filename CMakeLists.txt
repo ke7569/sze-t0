@@ -55,6 +55,8 @@ set(SZE_COMMON_SOURCES
   ${T0}/strategy/ZStrategy.cpp
   ${T0}/deepwin_strategy/sze_config_guard.cpp
   ${T0}/deepwin_strategy/sze_get_obj.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/reference/snapshot_legacy15/snapshot_legacy15_factors.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/reference/snapshot_legacy15/snapshot_legacy15_model.cpp
   ${SZE_MD}/SZEProtocol.cpp
   ${SZE_MD}/SZERecoverable.cpp)
 
@@ -81,6 +83,8 @@ add_library(t0_strategy_sze SHARED ${SZE_COMMON_SOURCES})
 target_compile_definitions(t0_strategy_sze PRIVATE T0_USE_DEEPWIN T0_SZE_STRATEGY_ONLY)
 target_include_directories(t0_strategy_sze PRIVATE
   ${T0} ${T0}/strategy ${T0}/predictor ${SZE_MD}
+  ${T0}/cpp_model
+  ${CMAKE_CURRENT_SOURCE_DIR}/reference/snapshot_legacy15
   ${DEEPWIN_INCLUDE} ${DEEPWIN_INCLUDE}/longfist ${BOOST_INCLUDE} ${PYTHON_INCLUDE})
 target_link_libraries(t0_strategy_sze PRIVATE ${DEEPWIN_LIBS})
 set_target_properties(t0_strategy_sze PROPERTIES
@@ -155,6 +159,31 @@ target_link_libraries(sze_md PRIVATE
 set_target_properties(sze_md PROPERTIES OUTPUT_NAME sze_md
   BUILD_RPATH "${WC_LIB};${YJJ_LIB};${TPWC_LIB};${BOOST_LIB}")
 
+add_library(sze_l1_md SHARED
+  ${SZE_MD}/MDEngineSZEL1.cpp ${SZE_MD}/SZEProtocol.cpp
+  ${SZE_MD}/SZERecoverable.cpp)
+target_include_directories(sze_l1_md PRIVATE
+  ${SZE_MD} ${DEEPWIN_INCLUDE} ${DEEPWIN_INCLUDE}/longfist
+  ${BOOST_INCLUDE} ${PYTHON_INCLUDE})
+target_link_libraries(sze_l1_md PRIVATE
+  ${YJJ_LIB}/libjournal.so.1.1 ${YJJ_LIB}/libkflog.so
+  ${WC_LIB}/libwingchunmd.so ${TPWC_LIB}/libpython3.6m.so.1.0
+  ${TPWC_LIB}/liblog4cplus.so.0
+  ${BOOST_LIB}/libboost_locale.so.1.62.0
+  ${BOOST_LIB}/libboost_date_time.so.1.62.0
+  ${BOOST_LIB}/libboost_filesystem.so.1.62.0
+  ${BOOST_LIB}/libboost_system.so.1.62.0
+  ${BOOST_LIB}/libboost_thread.so.1.62.0
+  ${BOOST_LIB}/libboost_serialization.so.1.62.0
+  ${BOOST_LIB}/libboost_math_tr1.so.1.62.0
+  ${BOOST_LIB}/libboost_python.so.1.62.0
+  ${BOOST_LIB}/libboost_chrono.so.1.62.0
+  ${BOOST_LIB}/libboost_regex.so.1.62.0
+  ${BOOST_LIB}/libboost_program_options.so.1.62.0
+  ${BOOST_LIB}/libboost_atomic.so.1.62.0 pthread dl rt)
+set_target_properties(sze_l1_md PROPERTIES OUTPUT_NAME sze_l1_md
+  BUILD_RPATH "${WC_LIB};${YJJ_LIB};${TPWC_LIB};${BOOST_LIB}")
+
 enable_testing()
 add_executable(sze_recoverable_test
   ${SZE_MD}/tests/sze_recoverable_test.cpp ${SZE_MD}/SZERecoverable.cpp)
@@ -175,6 +204,11 @@ add_executable(sze_config_guard_test
   ${T0}/tests/sze_config_guard_test.cpp ${T0}/deepwin_strategy/sze_config_guard.cpp)
 target_include_directories(sze_config_guard_test PRIVATE ${T0})
 add_test(NAME sze_config_guard_test COMMAND sze_config_guard_test)
+
+add_executable(sze_prediction_arbiter_test
+  ${T0}/tests/sze_prediction_arbiter_test.cpp)
+target_include_directories(sze_prediction_arbiter_test PRIVATE ${T0})
+add_test(NAME sze_prediction_arbiter_test COMMAND sze_prediction_arbiter_test)
 
 add_executable(sze_recovery_status
   ${SZE_MD}/tools/sze_recovery_status.cpp ${SZE_MD}/SZERecoverable.cpp)
