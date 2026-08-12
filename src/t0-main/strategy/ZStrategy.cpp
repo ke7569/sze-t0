@@ -368,11 +368,11 @@ void ZStrategy::setOffset() {
 
     double offset_multiplier = 1.0;
     if (market_time_minutes >= 0) {
-        if (market_time_minutes < 930) {
+        if (market_time_minutes < 931) {
             offset_multiplier = 5.0;
-        } else if (market_time_minutes < 941) {
-            const double ramp_progress = (market_time_minutes - 930.0) / 10.0;
-            offset_multiplier = 3.0 - 2.0 * std::max(0.0, std::min(1.0, ramp_progress));
+        } else if (market_time_minutes < 940) {
+            const double ramp_progress = (market_time_minutes - 931.0) / 9.0;
+            offset_multiplier = 5.0 - 4.0 * std::max(0.0, std::min(1.0, ramp_progress));
         } else if (market_time_minutes >= 1430) {
             offset_multiplier = 0.8;
         }
