@@ -148,10 +148,8 @@ int main() {
         {"enabled", true},
         {"mode", "live"},
         {"input_mode", "recovery_handoff"},
-        {"buy_only", true},
         {"max_order_volume", 200},
         {"max_position", 200},
-        {"max_orders_per_instrument", 1}
     };
     error = "stale";
     if (!sze_strategy_library::validate_config(realtime_recovery, &error) ||

@@ -84,10 +84,8 @@ ZStrategy::ZStrategy(const std::string &InstrumentID,
             virtual_routing_ = routing["mode"].get<std::string>() == "virtual";
         }
         recovery_routing_ = routing.value("input_mode", std::string()) == "recovery_handoff";
-        buy_only_ = routing.value("buy_only", false);
         max_order_volume_ = routing.value("max_order_volume", 0);
         max_position_ = routing.value("max_position", 0);
-        max_orders_per_instrument_ = routing.value("max_orders_per_instrument", 0);
     }
 
     if (config.find("sze_test_order") != config.end() &&
@@ -266,26 +264,17 @@ int ZStrategy::insertOrder(RT_Order order) {
     }
     if (recovery_routing_) {
         const int current_position = i_params.static_position + context.pi;
-        if (buy_only_ && order.Direction != BUY) {
-            KF_LOG_ERROR(logger, "[SZEOrderBlocked] InstrumentID=" << mTradeInstrument
-                << ", reason=buy_only");
-            return -1;
-        }
         if (max_order_volume_ <= 0 || order.Volume > max_order_volume_ ||
             (max_position_ > 0 && order.Direction == BUY &&
              current_position + context.vl_pos + static_cast<int>(order.Volume) > max_position_) ||
             (max_position_ > 0 && order.Direction == SELL &&
-             current_position - context.vs_pos - static_cast<int>(order.Volume) < 0) ||
-            (max_orders_per_instrument_ > 0 &&
-             submitted_order_count_ >= max_orders_per_instrument_)) {
+             current_position - context.vs_pos - static_cast<int>(order.Volume) < 0)) {
             KF_LOG_ERROR(logger, "[SZEOrderBlocked] InstrumentID=" << mTradeInstrument
-                << ", reason=recovery_order_limit"
+                << ", reason=position_or_volume_limit"
                 << ", volume=" << order.Volume
-                << ", current_position=" << current_position
-                << ", submitted=" << submitted_order_count_);
+                << ", current_position=" << current_position);
             return -1;
         }
-        ++submitted_order_count_;
     }
     char direction = '0';
     char offsetFlag = '0';
@@ -379,10 +368,10 @@ void ZStrategy::setOffset() {
 
     double offset_multiplier = 1.0;
     if (market_time_minutes >= 0) {
-        if (market_time_minutes < 931) {
+        if (market_time_minutes < 930) {
             offset_multiplier = 5.0;
         } else if (market_time_minutes < 941) {
-            const double ramp_progress = (market_time_minutes - 931.0) / 10.0;
+            const double ramp_progress = (market_time_minutes - 930.0) / 10.0;
             offset_multiplier = 3.0 - 2.0 * std::max(0.0, std::min(1.0, ramp_progress));
         } else if (market_time_minutes >= 1430) {
             offset_multiplier = 0.8;
@@ -399,11 +388,11 @@ void ZStrategy::setOffset() {
     }
     g_params.global_bias_factor = global_bias_factor_base_line_ * global_bias_scale;
 
-    if (market_time_minutes < 931) {
+    if (market_time_minutes < 930) {
         g_params.position_limit = 0.0;
-    } else if (market_time_minutes < 933) {
+    } else if (market_time_minutes < 932) {
         g_params.position_limit = 0.3 * g_params.position_limit_base_line;
-    } else if (market_time_minutes < 935) {
+    } else if (market_time_minutes < 934) {
         g_params.position_limit = 0.5 * g_params.position_limit_base_line;
     } else if (market_time_minutes >= 1430) {
         g_params.position_limit = 0.6 * g_params.position_limit_base_line;
