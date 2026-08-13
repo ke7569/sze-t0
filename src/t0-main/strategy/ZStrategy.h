@@ -140,6 +140,7 @@ private:
     bool routing_enabled_ = false;
     bool virtual_routing_ = false;
     bool recovery_routing_ = false;
+    int startup_warmup_signal_count_ = 50;
     int max_order_volume_ = 0;
     int max_position_ = 0;
     TestOrderConfig test_order_;

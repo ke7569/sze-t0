@@ -6,6 +6,7 @@
   "orderbook_mode": "hp-shadow",
   "model_path": "/home/t0/models/mix153060_sze_v04_a3_eff60.bin",
   "mix153060_model_sha256": "50e44caba694168d51188ac663c15d76e1b6dadb5d2b6ea72a5d1b0151069379",
+  "sze_startup_warmup_signals": 50,
   "md_source_index": [88],
   "td_source_index": [],
   "instrument_id": ["000001"],

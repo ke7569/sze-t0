@@ -1,5 +1,8 @@
 #include "sze_config_guard.h"
 
+#include <sched.h>
+#include <set>
+
 namespace sze_strategy_library {
 
 namespace {
@@ -57,6 +60,27 @@ bool validate_live_routing(const nlohmann::json& config, std::string* error) {
         mode == routing->end() || !mode->is_string() ||
         (mode->get<std::string>() != "live" && mode->get<std::string>() != "virtual")) {
         return reject("hp-realtime requires enabled sze_order_routing mode live or virtual", error);
+    }
+    nlohmann::json::const_iterator retry_ms =
+        routing->find("position_query_retry_ms");
+    if (retry_ms != routing->end() &&
+        (!retry_ms->is_number_integer() || retry_ms->get<int>() < 1000)) {
+        return reject("position_query_retry_ms must be an integer >= 1000", error);
+    }
+    nlohmann::json::const_iterator cutoff =
+        routing->find("position_query_cutoff_hhmmss");
+    if (cutoff != routing->end()) {
+        if (!cutoff->is_number_integer()) {
+            return reject("position_query_cutoff_hhmmss must be valid HHMMSS", error);
+        }
+        const int value = cutoff->get<int>();
+        const int hour = value / 10000;
+        const int minute = (value / 100) % 100;
+        const int second = value % 100;
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+            second < 0 || second > 59) {
+            return reject("position_query_cutoff_hhmmss must be valid HHMMSS", error);
+        }
     }
     nlohmann::json::const_iterator test_order = config.find("sze_test_order");
     if (test_order != config.end()) {
@@ -138,11 +162,80 @@ bool validate_live_routing(const nlohmann::json& config, std::string* error) {
     return true;
 }
 
+bool validate_startup_warmup(const nlohmann::json& config, std::string* error) {
+    nlohmann::json::const_iterator warmup =
+        config.find("sze_startup_warmup_signals");
+    if (warmup == config.end()) {
+        return true;
+    }
+    if (!warmup->is_number_integer() || warmup->get<int>() < 0) {
+        return reject(
+            "sze_startup_warmup_signals must be a non-negative integer", error);
+    }
+    return true;
+}
+
+bool validate_worker_plan(const nlohmann::json& config, std::string* error) {
+    nlohmann::json::const_iterator count = config.find("worker_count");
+    nlohmann::json::const_iterator cpus = config.find("worker_cpus");
+    nlohmann::json::const_iterator state_cpus = config.find("worker_state_cpus");
+    if (count == config.end() && cpus == config.end()) {
+        return true;
+    }
+    if (count == config.end() || !count->is_number_integer() ||
+        count->get<int>() < 1 || count->get<int>() > 64) {
+        return reject("worker_count must be an integer in [1,64]", error);
+    }
+    if (cpus == config.end() || !cpus->is_array() ||
+        static_cast<int>(cpus->size()) != count->get<int>()) {
+        return reject("worker_cpus must contain exactly worker_count entries", error);
+    }
+    if (state_cpus == config.end() || !state_cpus->is_array() ||
+        static_cast<int>(state_cpus->size()) != count->get<int>()) {
+        return reject("worker_state_cpus must contain exactly worker_count entries", error);
+    }
+    std::set<int> seen;
+    for (nlohmann::json::const_iterator it = cpus->begin(); it != cpus->end(); ++it) {
+        if (!it->is_number_integer() || it->get<int>() < 0 ||
+            it->get<int>() >= CPU_SETSIZE || !seen.insert(it->get<int>()).second) {
+            return reject("worker_cpus must contain unique valid CPU ids", error);
+        }
+    }
+    for (nlohmann::json::const_iterator it = state_cpus->begin();
+         it != state_cpus->end(); ++it) {
+        if (!it->is_number_integer() || it->get<int>() < 0 ||
+            it->get<int>() >= CPU_SETSIZE || !seen.insert(it->get<int>()).second) {
+            return reject("worker strategy/state CPUs must be unique valid CPU ids", error);
+        }
+    }
+    nlohmann::json::const_iterator params = config.find("ins_params");
+    if (params != config.end() && params->is_object()) {
+        for (nlohmann::json::const_iterator it = params->begin();
+             it != params->end(); ++it) {
+            if (!it->is_object()) {
+                return reject("ins_params entries must be objects", error);
+            }
+            nlohmann::json::const_iterator cpu = it->find("cpu");
+            if (cpu != it->end() && (!cpu->is_number_integer() ||
+                cpu->get<int>() < 0 || cpu->get<int>() >= CPU_SETSIZE)) {
+                return reject("ins_params.cpu must be a valid CPU id", error);
+            }
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 bool validate_config(const nlohmann::json& config, std::string* error) {
     if (error != 0) {
         error->clear();
+    }
+    if (!validate_startup_warmup(config, error)) {
+        return false;
+    }
+    if (!validate_worker_plan(config, error)) {
+        return false;
     }
     nlohmann::json::const_iterator market = config.find("market");
     if (market == config.end()) {

@@ -5,6 +5,7 @@
 
 #include "StrategyBase.h"
 #include "ZStrategy.h"
+#include "sze_position_risk.h"
 #include "../RawDataStructAPI.h"
 #include "../wc_strategy.h"
 #include "../predictor/factor.h"
@@ -22,6 +23,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <cstdio>
+#include <ctime>
 
 #ifdef T0_SZE_STRATEGY_ONLY
 #include "SZEProtocol.h"
@@ -421,13 +423,16 @@ void StrategyBase::request_startup_risk_state() {
         mPendingAccountRid[src] = account_rid;
         mPendingPositionRid[src] = position_rid;
         mAccountReady[src] = account_rid < 0;
-        mPositionReady[src] = position_rid < 0;
+        mPositionReady[src] = !mSzeLiveRoutingEnabled && position_rid < 0;
         const auto early_account_it = mEarlyAccountRid.find(src);
         if (early_account_it != mEarlyAccountRid.end() && early_account_it->second == account_rid) {
             mAccountReady[src] = true;
         }
         const auto early_position_it = mEarlyPositionRid.find(src);
-        if (early_position_it != mEarlyPositionRid.end() && early_position_it->second == position_rid) {
+        if (early_position_it != mEarlyPositionRid.end() &&
+            early_position_it->second == position_rid &&
+            (!mSzeLiveRoutingEnabled ||
+             mSzeLivePositionReady.size() == mInstrumentVec.size())) {
             mPositionReady[src] = true;
         }
         KF_LOG_INFO(logger, "[RiskInit] source=" << src
@@ -437,10 +442,107 @@ void StrategyBase::request_startup_risk_state() {
             << " prediction_continues_while_routing_gated=1");
     }
 
+    if (mSzeLiveRoutingEnabled && !is_risk_data_ready()) {
+        schedule_startup_position_retry();
+    }
+
     if (!mRiskReadyLogged && is_risk_data_ready()) {
         mRiskReadyLogged = true;
         KF_LOG_INFO(logger, "[RiskInit] startup account/position ready, trading enabled");
     }
+}
+
+void StrategyBase::schedule_startup_position_retry() {
+    if (!mSzeLiveRoutingEnabled || mSzePositionRetryScheduled ||
+        mSzePositionCutoffApplied ||
+        mSzeLivePositionReady.size() == mInstrumentVec.size() ||
+        util == nullptr) {
+        return;
+    }
+    mSzePositionRetryScheduled = true;
+    const long long now = util->get_nano();
+    BLCallback callback = std::bind(
+        &StrategyBase::retry_or_finalize_startup_positions, this);
+    util->insert_callback(
+        now + static_cast<long long>(mSzePositionRetryIntervalMs) * 1000000LL,
+        callback);
+}
+
+void StrategyBase::finalize_unresolved_startup_positions(const char* reason) {
+    std::size_t defaulted = 0;
+    std::ostringstream examples;
+    for (std::unordered_map<std::string, ZStrategy*>::iterator it =
+             mZStrategyMap.begin(); it != mZStrategyMap.end(); ++it) {
+        if (it->second == nullptr ||
+            mSzeLivePositionReady.find(it->first) != mSzeLivePositionReady.end()) {
+            continue;
+        }
+        it->second->sync_startup_position(0, 0);
+        mSzeLivePositionReady.insert(it->first);
+        if (defaulted < 10) {
+            if (defaulted != 0) {
+                examples << '|';
+            }
+            examples << it->first;
+        }
+        ++defaulted;
+    }
+    mSzePositionCutoffApplied = true;
+    for (short src : mTdSources) {
+        mPositionReady[src] = true;
+    }
+    KF_LOG_INFO(logger, "[RiskInit][PositionCutoff] reason="
+        << (reason == nullptr ? "unknown" : reason)
+        << " cutoff_hhmmss=" << mSzePositionCutoffHhmmss
+        << " defaulted=" << defaulted
+        << " examples=" << examples.str()
+        << " position_instruments=" << mSzeLivePositionReady.size()
+        << "/" << mInstrumentVec.size());
+}
+
+void StrategyBase::retry_or_finalize_startup_positions() {
+    mSzePositionRetryScheduled = false;
+    if (!mSzeLiveRoutingEnabled || mSzePositionCutoffApplied ||
+        mSzeLivePositionReady.size() == mInstrumentVec.size()) {
+        return;
+    }
+
+    std::time_t now = std::time(nullptr);
+    std::tm local = {};
+    localtime_r(&now, &local);
+    const int market_hhmmss =
+        local.tm_hour * 10000 + local.tm_min * 100 + local.tm_sec;
+    if (sze_position_risk::AtOrAfterCutoff(
+            market_hhmmss, mSzePositionCutoffHhmmss)) {
+        finalize_unresolved_startup_positions("market_time_cutoff");
+        if (!mRiskReadyLogged && is_risk_data_ready()) {
+            mRiskReadyLogged = true;
+            KF_LOG_INFO(logger, "[RiskInit] startup account/position ready, trading enabled");
+        }
+        return;
+    }
+
+    for (short src : mTdSources) {
+        if (mPositionReady[src]) {
+            continue;
+        }
+        const int position_rid = req_position(src);
+        mPendingPositionRid[src] = position_rid;
+        // A failed submission is not authoritative position data. Keep the
+        // source gated and retry until a complete result or the cutoff.
+        mPositionReady[src] = false;
+        const auto early = mEarlyPositionRid.find(src);
+        if (early != mEarlyPositionRid.end() && early->second == position_rid &&
+            mSzeLivePositionReady.size() == mInstrumentVec.size()) {
+            mPositionReady[src] = true;
+        }
+        KF_LOG_INFO(logger, "[RiskInitRetry] position request source=" << src
+            << " rid=" << position_rid
+            << " resolved=" << mSzeLivePositionReady.size()
+            << "/" << mInstrumentVec.size()
+            << " cutoff_hhmmss=" << mSzePositionCutoffHhmmss);
+    }
+    schedule_startup_position_retry();
 }
 
 bool StrategyBase::is_risk_data_ready() const {
@@ -540,6 +642,10 @@ StrategyBase::StrategyBase(const std::string &name, json& src_config): IWCStrate
         src_config["sze_order_routing"].is_object()) {
         const json& routing = src_config["sze_order_routing"];
         mSzeLiveRoutingEnabled = routing.value("enabled", false);
+        mSzePositionRetryIntervalMs = std::max(
+            1000, routing.value("position_query_retry_ms", 5000));
+        mSzePositionCutoffHhmmss = routing.value(
+            "position_query_cutoff_hhmmss", 93100);
     }
 #ifdef T0_SZE_STRATEGY_ONLY
     parse_sze_recovery_consumer_config(src_config);
@@ -2634,26 +2740,19 @@ void StrategyBase::on_rtn_pos_option(const LFRspPositionField* data, bool isLast
         mEarlyPositionRid[source] = request_id;
         return;
     }
-    if (mSzeLiveRoutingEnabled) {
-        for (std::unordered_map<std::string, ZStrategy*>::iterator strategy_it =
-                 mZStrategyMap.begin(); strategy_it != mZStrategyMap.end(); ++strategy_it) {
-            if (strategy_it->second != nullptr &&
-                mSzeLivePositionReady.find(strategy_it->first) ==
-                    mSzeLivePositionReady.end()) {
-                strategy_it->second->sync_startup_position(0, 0);
-                mSzeLivePositionReady.insert(strategy_it->first);
-                KF_LOG_INFO(logger, "[RiskInit][Position] missing instrument treated as zero"
-                    << " source=" << source << " instrument=" << strategy_it->first);
-            }
-        }
-    }
-    mPositionReady[source] = true;
+    const bool all_positions_resolved =
+        mSzeLivePositionReady.size() == mInstrumentVec.size();
+    mPositionReady[source] = !mSzeLiveRoutingEnabled || all_positions_resolved;
     KF_LOG_INFO(logger, "[RiskInit] position ready source=" << source
         << " rid=" << request_id
         << " position_instruments=" << mSzeLivePositionReady.size()
         << "/" << mInstrumentVec.size()
         << " routing_ready=" << BoolText(is_risk_data_ready())
+        << " unresolved=" << (mInstrumentVec.size() - mSzeLivePositionReady.size())
         << " prediction_continues_while_routing_gated=1");
+    if (!all_positions_resolved) {
+        schedule_startup_position_retry();
+    }
     if (!mRiskReadyLogged && is_risk_data_ready()) {
         mRiskReadyLogged = true;
         KF_LOG_INFO(logger, "[RiskInit] startup account/position ready, trading enabled");

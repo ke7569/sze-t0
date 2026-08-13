@@ -5,6 +5,7 @@
 
 #include "ZStrategy.h"
 #include "StrategyBase.h"
+#include "sze_position_risk.h"
 #include "../common.h"
 #include "../total_header.h"
 #include <iostream>
@@ -20,7 +21,6 @@ constexpr int kRiskErrShortOfCancelNum = 3005;
 constexpr int kRiskErrNoClosePosition = 3007;
 constexpr int kRiskErrNoAvailMoney = 3008;
 constexpr long long kRiskCooldownNs = 1000LL * 1000LL * 1000LL;
-constexpr int kStartupWarmupSignalCount = 30;
 
 int NormalizeRiskCode(int request_id) {
     return request_id < 0 ? -request_id : request_id;
@@ -87,6 +87,16 @@ ZStrategy::ZStrategy(const std::string &InstrumentID,
         max_order_volume_ = routing.value("max_order_volume", 0);
         max_position_ = routing.value("max_position", 0);
     }
+    if (config.find("sze_startup_warmup_signals") != config.end() &&
+        config["sze_startup_warmup_signals"].is_number_integer()) {
+        startup_warmup_signal_count_ =
+            config["sze_startup_warmup_signals"].get<int>();
+    }
+    if (startup_warmup_signal_count_ < 0) {
+        startup_warmup_signal_count_ = 0;
+    }
+    KF_LOG_INFO(logger, "[SZEWarmup] instrument=" << mTradeInstrument
+        << " prediction_only_samples=" << startup_warmup_signal_count_);
 
     if (config.find("sze_test_order") != config.end() &&
         config["sze_test_order"].is_object()) {
@@ -188,15 +198,18 @@ ZStrategy::ZStrategy(const std::string &InstrumentID,
 
 void ZStrategy::sync_startup_position(int32_t total_position, int32_t available_position) {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    total_position = std::max(0, total_position);
-    available_position = std::max(0, std::min(available_position, total_position));
-    context.pi = total_position - i_params.static_position;
-    i_params.shortable = available_position;
+    const sze_position_risk::StartupPosition startup =
+        sze_position_risk::NormalizeStartupPosition(
+            i_params.static_position, total_position, available_position);
+    context.pi = startup.delta_from_static;
+    i_params.last_position = startup.delta_from_static;
+    i_params.shortable = startup.available;
     KF_LOG_INFO(logger, "[SZEPosSync] InstrumentID=" << mTradeInstrument
-        << ", total_position=" << total_position
-        << ", available_position=" << available_position
+        << ", total_position=" << startup.total
+        << ", available_position=" << startup.available
         << ", static_position=" << i_params.static_position
         << ", pi=" << context.pi
+        << ", last_position=" << i_params.last_position
         << ", shortable=" << i_params.shortable);
 }
 
@@ -378,14 +391,7 @@ void ZStrategy::setOffset() {
     }
     g_params.offset = g_params.offset_base_line * pred_unit * offset_multiplier;
 
-    double global_bias_scale = 1.0;
-    if (market_time_minutes >= 1300 && market_time_minutes < 1430) {
-        const double ramp_progress = (market_time_minutes - 1300.0) / 130.0;
-        global_bias_scale = 1.0 + std::max(0.0, std::min(1.0, ramp_progress));
-    } else if (market_time_minutes >= 1430) {
-        global_bias_scale = 2.0;
-    }
-    g_params.global_bias_factor = global_bias_factor_base_line_ * global_bias_scale;
+    g_params.global_bias_factor = global_bias_factor_base_line_;
 
     if (market_time_minutes < 930) {
         g_params.position_limit = 0.0;
@@ -457,8 +463,11 @@ void ZStrategy::setGlobalPredAdjFactor(double factor) {
 
 void ZStrategy::calcTheo(double prediction) {
     setOffset();
-    theo_.bias = getCurPosition() / g_params.position_base_line * g_params.global_bias_factor;
-    theo_.unitbias = g_params.offset * g_params.global_bias_factor * context.curr_ob->LastPrice /  g_params.position_base_line;
+    theo_.bias = sze_position_risk::Bias(
+        getCurPosition(), g_params.position_base_line, g_params.global_bias_factor);
+    theo_.unitbias = sze_position_risk::UnitBias(
+        g_params.offset, g_params.global_bias_factor,
+        context.curr_ob->LastPrice, g_params.position_base_line);
     theo_.theo0 = MP(context.curr_ob) * (1 + prediction * pred_unit);
 
     theo_.b_offset = (1 - theo_.bias * g_params.offset - g_params.offset - g_params.global_pred_adj_factor);
@@ -582,8 +591,8 @@ void ZStrategy::hitSell() {
 }
 
 int32_t ZStrategy::maxCanBuy() {
-    // shortable is sell availability; it must not cap a buy used to reach the target position.
-    int32_t qty = getPositionLimit() - context.pi - context.vl_pos;
+    int32_t qty = sze_position_risk::MaxCanBuy(
+        getRemainingShortable(), getPositionLimit(), context.pi, context.vl_pos);
     if (context.curr_ob != nullptr && context.curr_ob->LastPrice > 0.0) {
         qty = std::min(qty, static_cast<int32_t>(i_params.max_order_size / context.curr_ob->LastPrice));
     } else {
@@ -593,13 +602,9 @@ int32_t ZStrategy::maxCanBuy() {
 }
 
 int32_t ZStrategy::maxCanSell() {
-    // T0 sell capacity includes today's filled buys, even when the
-    // broker reports zero sellable yesterday-position at startup.
-    const int32_t t0_sellable = getRemainingShortable() + context.cum_buy;
-    const int32_t shortable_cap =
-        std::min(t0_sellable, getPositionLimit() + context.pi) - context.vs_pos;
-    const int32_t available_cap = i_params.static_position + context.pi - context.vs_pos;
-    return std::max<int32_t>(std::min(shortable_cap, available_cap), 0);
+    return sze_position_risk::MaxCanSell(
+        getRemainingShortable(), getPositionLimit(), i_params.static_position,
+        context.pi, context.vs_pos);
 }
 
 void ZStrategy::cancelBuy() {
@@ -620,17 +625,29 @@ void ZStrategy::on_signal(const MSMarketDataField * market_data, double signal, 
         context.last_ob = market_data;
         context.curr_ob = market_data;
         startup_signal_count_ = 1;
+        if (sze_position_risk::StartupWarmupActive(
+                startup_signal_count_, startup_warmup_signal_count_)) {
+            calcTheo(signal);
+        }
         return;
     }
 
     context.curr_ob = market_data;
     ++startup_signal_count_;
-    if (startup_signal_count_ <= kStartupWarmupSignalCount) {
+    const bool startup_warmup_active = sze_position_risk::StartupWarmupActive(
+        startup_signal_count_, startup_warmup_signal_count_);
+    if (startup_warmup_active) {
+        // Keep the prediction/theoretical-price path alive during warmup, but
+        // do not invoke the T0 order decision path or the test-order trigger.
+        calcTheo(signal);
+        KF_LOG_INFO(logger, "[SZEWarmup] instrument=" << mTradeInstrument
+            << " sample=" << startup_signal_count_
+            << " prediction=" << signal << " trading=0");
         context.last_ob = market_data;
         return;
     }
     if (test_order_.enabled &&
-        startup_signal_count_ >= kStartupWarmupSignalCount + test_order_.trigger_after_signals) {
+        startup_signal_count_ >= startup_warmup_signal_count_ + test_order_.trigger_after_signals) {
         maybe_send_test_order();
     }
     calcTheo(signal);

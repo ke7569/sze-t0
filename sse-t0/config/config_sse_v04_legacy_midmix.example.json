@@ -1,0 +1,17 @@
+{
+  "strategy_name": "sse_t0",
+  "market": "SH",
+  "instrument_id": ["600000"],
+  "his_amt": [0],
+  "static_position": [0],
+  "last_position": [0],
+  "model_type": "sse_v04_native",
+  "model_path": "/opt/sse-t0/models/v04-legacy-midmix-sse/SSEMODL1.bin",
+  "sse_factor_contract": "v0.4-sse-cob-batch-end-100us",
+  "sse_inference_backend": "native-cpp",
+  "md_source_index": [89],
+  "td_source_index": [190],
+  "sh_orderbook_mode": "full-orderbook",
+  "global_params": {"offset": 1.2, "quote_offset": 5, "bias_factor": 1, "position_limit": 0.3, "position_base_line": 100000},
+  "runtime_note": "SSE uses its own 50-factor contract; do not reuse the SZE mix153060 factor order. PyTorch is reference-only; live inference loads SSEMODL1.bin. Inject instrument stats, model path, TD credentials and source IDs at deployment time."
+}

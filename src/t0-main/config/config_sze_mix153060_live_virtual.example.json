@@ -6,10 +6,13 @@
   "md_source_index": [88],
   "td_source_index": [180],
   "model_path": "/home/zane/models/mix153060_sze_v04_a3_eff60.bin",
+  "sze_startup_warmup_signals": 50,
   "mix153060_model_sha256": "50e44caba694168d51188ac663c15d76e1b6dadb5d2b6ea72a5d1b0151069379",
   "sze_order_routing": {
     "enabled": true,
     "mode": "virtual",
+    "position_query_retry_ms": 5000,
+    "position_query_cutoff_hhmmss": 93100,
     "td_source_note": "Shenzhen ATP TD source. Keep this equal to vtd.source in the main configuration."
   },
   "sze_test_order": {

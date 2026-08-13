@@ -19,7 +19,8 @@ add_compile_options(-O3 -DNDEBUG)
 set(T0 ${CMAKE_CURRENT_SOURCE_DIR}/src/t0-main)
 set(SZE_MD ${CMAKE_CURRENT_SOURCE_DIR}/modules/deepwin_guoxin/md)
 set(SZE_TD ${CMAKE_CURRENT_SOURCE_DIR}/modules/deepwin_guoxin/td)
-set(RUNTIME ${CMAKE_CURRENT_SOURCE_DIR}/runtime_so)
+set(RUNTIME ${CMAKE_CURRENT_SOURCE_DIR}/runtime_so CACHE PATH
+  "Deepwin runtime root (may be supplied by the validated external builder)")
 set(DEEPWIN_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/toolchain/deepwin_include)
 set(BOOST_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/toolchain/boost_include)
 set(PYTHON_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/toolchain/python_include)
@@ -60,6 +61,12 @@ set(SZE_COMMON_SOURCES
   ${SZE_MD}/SZEProtocol.cpp
   ${SZE_MD}/SZERecoverable.cpp)
 
+set(SSE_COMMON_SOURCES ${SZE_COMMON_SOURCES})
+list(REMOVE_ITEM SSE_COMMON_SOURCES ${T0}/deepwin_strategy/sze_get_obj.cpp)
+list(APPEND SSE_COMMON_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/strategy/sse_config_guard.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/strategy/sse_get_obj.cpp)
+
 set(DEEPWIN_LIBS
   ${WC_LIB}/libwingchunstrategy.so
   ${YJJ_LIB}/libjournal.so.1.1
@@ -92,6 +99,12 @@ set_target_properties(t0_strategy_sze PROPERTIES
   BUILD_RPATH "${WC_LIB};${YJJ_LIB};${TPWC_LIB};${BOOST_LIB}")
 set_source_files_properties(${T0}/predictor/mix153060_runtime.cpp
   PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+
+add_library(t0_strategy_sse SHARED ${SSE_COMMON_SOURCES})
+target_compile_definitions(t0_strategy_sse PRIVATE T0_USE_DEEPWIN)
+target_include_directories(t0_strategy_sse PRIVATE ${T0} ${T0}/strategy ${T0}/predictor ${SZE_MD} ${T0}/cpp_model ${CMAKE_CURRENT_SOURCE_DIR}/reference/snapshot_legacy15 ${DEEPWIN_INCLUDE} ${DEEPWIN_INCLUDE}/longfist ${BOOST_INCLUDE} ${PYTHON_INCLUDE})
+target_link_libraries(t0_strategy_sse PRIVATE ${DEEPWIN_LIBS})
+set_target_properties(t0_strategy_sse PROPERTIES OUTPUT_NAME t0_strategy_sse BUILD_RPATH "${WC_LIB};${YJJ_LIB};${TPWC_LIB};${BOOST_LIB}")
 
 if(SZE_BUILD_TD)
   if(NOT EXISTS "${SZE_TD_API_DIR}/include/atp_quant_api.h")
@@ -204,6 +217,51 @@ add_executable(sze_config_guard_test
   ${T0}/tests/sze_config_guard_test.cpp ${T0}/deepwin_strategy/sze_config_guard.cpp)
 target_include_directories(sze_config_guard_test PRIVATE ${T0})
 add_test(NAME sze_config_guard_test COMMAND sze_config_guard_test)
+
+add_executable(sze_position_risk_test
+  ${T0}/tests/sze_position_risk_test.cpp)
+target_include_directories(sze_position_risk_test PRIVATE ${T0})
+add_test(NAME sze_position_risk_test COMMAND sze_position_risk_test)
+
+add_executable(sse_config_guard_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/tests/sse_config_guard_test.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/strategy/sse_config_guard.cpp)
+target_include_directories(sse_config_guard_test PRIVATE ${T0})
+add_test(NAME sse_config_guard_test COMMAND sse_config_guard_test)
+
+add_library(deepwin_market_data_runtime STATIC
+  ${SZE_MD}/common/UdpChannelRuntime.cpp)
+target_include_directories(deepwin_market_data_runtime PUBLIC
+  ${SZE_MD}/common)
+target_link_libraries(deepwin_market_data_runtime PUBLIC pthread)
+
+add_executable(sse_udp_observer
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/market_observer/sse_udp_observer.cpp)
+target_link_libraries(sse_udp_observer PRIVATE deepwin_market_data_runtime)
+
+add_library(sse_model_runtime STATIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model/sse_model_runtime.cpp)
+target_include_directories(sse_model_runtime PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model
+  ${T0}/cpp_model/eigen3)
+target_compile_options(sse_model_runtime PRIVATE -ffp-contract=off)
+
+add_executable(sse_model_runtime_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model/sse_model_runtime_test.cpp)
+target_link_libraries(sse_model_runtime_test PRIVATE sse_model_runtime)
+add_test(NAME sse_model_runtime_test COMMAND sse_model_runtime_test)
+
+add_executable(sse_model_sequence_probe
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model/sse_model_sequence_probe.cpp)
+target_link_libraries(sse_model_sequence_probe PRIVATE sse_model_runtime)
+
+add_executable(sse_udp_observer_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/market_observer/sse_udp_observer_test.cpp)
+add_test(NAME sse_udp_observer_test COMMAND sse_udp_observer_test)
+add_test(NAME sse_udp_observer_offline_test
+  COMMAND /usr/bin/python3.6m
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/market_observer/sse_udp_observer_offline_test.py
+  $<TARGET_FILE:sse_udp_observer>)
 
 add_executable(sze_prediction_arbiter_test
   ${T0}/tests/sze_prediction_arbiter_test.cpp)

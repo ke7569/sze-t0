@@ -1,0 +1,16 @@
+[Unit]
+Description=Fixed Shenzhen daily capture
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/zane/run_main
+ExecStart=/home/zane/bin/run_sze_capture_daily.sh
+ExecStartPre=/home/zane/bin/sze_daily_preflight.sh
+KillSignal=SIGTERM
+TimeoutStopSec=120
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

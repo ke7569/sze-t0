@@ -157,6 +157,51 @@ int main() {
         std::cerr << "recovery trading config was rejected: " << error << std::endl;
         return 28;
     }
+    nlohmann::json invalid_position_retry = realtime_recovery;
+    invalid_position_retry["sze_order_routing"]["position_query_retry_ms"] = 999;
+    if (!expect_rejected(invalid_position_retry, "integer >= 1000")) {
+        return 29;
+    }
+    nlohmann::json invalid_position_cutoff = realtime_recovery;
+    invalid_position_cutoff["sze_order_routing"]["position_query_cutoff_hhmmss"] = 93699;
+    if (!expect_rejected(invalid_position_cutoff, "valid HHMMSS")) {
+        return 30;
+    }
+    nlohmann::json warmup = realtime;
+    warmup["sze_startup_warmup_signals"] = 50;
+    error = "stale";
+    if (!sze_strategy_library::validate_config(warmup, &error) || !error.empty()) {
+        std::cerr << "warmup config was rejected: " << error << std::endl;
+        return 31;
+    }
+    nlohmann::json bad_warmup = realtime;
+    bad_warmup["sze_startup_warmup_signals"] = -1;
+    if (!expect_rejected(bad_warmup, "non-negative integer")) {
+        return 32;
+    }
+    nlohmann::json non_integer_warmup = realtime;
+    non_integer_warmup["sze_startup_warmup_signals"] = 50.5;
+    if (!expect_rejected(non_integer_warmup, "non-negative integer")) {
+        return 33;
+    }
+    nlohmann::json worker_plan = realtime;
+    worker_plan["worker_count"] = 2;
+    worker_plan["worker_cpus"] = {16, 17};
+    worker_plan["worker_state_cpus"] = {24, 25};
+    worker_plan["ins_params"] = {
+        {"000001.SZ", {{"Date", 20260810}, {"cpu", 16}}},
+        {"000002.SZ", {{"Date", 20260810}, {"cpu", 17}}}
+    };
+    error = "stale";
+    if (!sze_strategy_library::validate_config(worker_plan, &error) || !error.empty()) {
+        std::cerr << "worker plan config was rejected: " << error << std::endl;
+        return 34;
+    }
+    nlohmann::json duplicate_worker_cpu = worker_plan;
+    duplicate_worker_cpu["worker_cpus"] = {16, 16};
+    if (!expect_rejected(duplicate_worker_cpu, "unique valid CPU")) {
+        return 35;
+    }
     nlohmann::json shadow_routing = hp;
     shadow_routing["sze_order_routing"] = {{"enabled", true}, {"mode", "virtual"}};
     if (!expect_rejected(shadow_routing, "requires hp-realtime mode")) {

@@ -19,6 +19,7 @@ project.
 - `models`: model inputs
 - `testdata`: decoder and order/trade fixtures
 - `deploy`: generated deployment artifacts, kept outside this source tree
+- `sse-t0`: disposable Shanghai development child project. `strategy/` contains the HStrategy boundary, `market_observer/` contains the raw UDP feed observer, and `config/` contains credential-free templates.
 
 ## Rules
 

@@ -15,6 +15,8 @@ from decimal import Decimal, ROUND_HALF_UP
 
 PREFIXES = ("000", "001", "002", "003", "300", "301")
 MODEL_SHA256 = "ce5bf6378a45e9a90f1f00607cc1ced4c31a80b1d99ac0e58d28c2745f14ce6d"
+WORKER_CPUS = (16, 17, 18, 19, 20, 21, 22, 23)
+WORKER_STATE_CPUS = (24, 25, 26, 27, 28, 29, 30, 31)
 
 
 def date_text(value):
@@ -48,6 +50,14 @@ def rounded_limit(price, ratio):
     return float(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def fnv1a(text):
+    value = 1469598103934665603
+    for byte in text.encode("ascii"):
+        value ^= byte
+        value = (value * 1099511628211) & 0xffffffffffffffff
+    return value
+
+
 def valid_number(value):
     try:
         number = float(value)
@@ -61,6 +71,10 @@ def main(argv=None):
     parser.add_argument("--target-date", required=True)
     parser.add_argument("--source-date", default=None)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--audit-dir", default=None,
+                        help="optional archive directory for audit/universe/rejected files")
+    parser.add_argument("--emit-md-config", action="store_true",
+                        help="also emit the rarely-changing MD config")
     parser.add_argument("--model-path", default="/home/zane/models/mix153060_sze_v04_a3_eff60.bin")
     parser.add_argument("--token-env", default="TUSHARE_TOKEN")
     parser.add_argument("--history-calendar-days", type=int, default=45)
@@ -158,6 +172,17 @@ def main(argv=None):
         amount_rows = valid_history[-5:]
         amounts = [float(row["amount"]) * 1000.0 for row in amount_rows]
         history_amount = math.fsum(amounts) / float(len(amounts))
+        closes = [float(row["close"]) for row in valid_history[-21:]]
+        returns = [math.log(closes[index] / closes[index - 1])
+                   for index in range(1, len(closes))
+                   if closes[index] > 0.0 and closes[index - 1] > 0.0]
+        history_volatility = 0.0
+        if len(returns) >= 2:
+            mean_return = math.fsum(returns) / len(returns)
+            history_volatility = math.sqrt(
+                math.fsum((value - mean_return) ** 2 for value in returns) /
+                (len(returns) - 1)
+            )
 
         limit_source = "tushare.stk_limit.target"
         limit_row = target_limit_by_code.get(code)
@@ -186,9 +211,10 @@ def main(argv=None):
             "FreeShare": free_share,
             "HpUpperPrice": upper,
             "HpLowerPrice": lower,
-            "HistoryVolatility20d": 0.0,
+            "HistoryVolatility20d": history_volatility,
             "static_position": 0,
             "last_position": 0,
+            "cpu": WORKER_CPUS[fnv1a(code) % len(WORKER_CPUS)],
         }
         audit.append({
             "instrument": code,
@@ -197,6 +223,8 @@ def main(argv=None):
             "history_amount": history_amount,
             "history_dates": [row["trade_date"] for row in amount_rows],
             "history_observations": len(amount_rows),
+            "history_volatility_20d": history_volatility,
+            "history_volatility_observations": len(returns),
             "free_share": free_share,
             "free_share_source_date": free_share_source_date,
             "pre_close_source_date": latest["trade_date"],
@@ -206,9 +234,15 @@ def main(argv=None):
     config = {
         "strategy_name": "sze_recovery_all_{}".format(target),
         "market": "SZ",
+        "trading_day": int(target),
+        "static_data_source_date": int(source),
         "mode": "hp-shadow",
         "model_path": args.model_path,
         "mix153060_model_sha256": MODEL_SHA256,
+        "sze_startup_warmup_signals": 50,
+        "worker_count": len(WORKER_CPUS),
+        "worker_cpus": list(WORKER_CPUS),
+        "worker_state_cpus": list(WORKER_STATE_CPUS),
         "md_source_index": [],
         "td_source_index": [],
         "ins_params": params,
@@ -225,6 +259,9 @@ def main(argv=None):
             "journal_max_payload_bytes": 128,
             "shm_path": "/dev/shm/sze_all_{}.events".format(target),
             "state_cpu": 7, "strategy_cpu": 8,
+            "worker_count": len(WORKER_CPUS),
+            "worker_cpus": list(WORKER_CPUS),
+            "worker_state_cpus": list(WORKER_STATE_CPUS),
         },
         "sze_prediction_capture": {
             "enabled": True,
@@ -240,31 +277,89 @@ def main(argv=None):
         },
     }
     output_dir = os.path.abspath(args.output_dir)
-    config_path = os.path.join(output_dir, "config_sze_recovery_all_{}.json".format(target))
-    audit_path = os.path.join(output_dir, "static_audit_{}.json".format(target))
-    rejected_path = os.path.join(output_dir, "rejected_{}.json".format(target))
-    universe_path = os.path.join(output_dir, "universe_{}.csv".format(target))
+    archive_dir = os.path.abspath(args.audit_dir) if args.audit_dir else None
+    config_path = os.path.join(output_dir, "config_sze_daily_{}.json".format(target))
+    md_path = os.path.join(output_dir, "deepwin_sze_daily.json")
+    main_path = os.path.join(output_dir, "main_sze_daily_{}.conf".format(target))
+    if archive_dir and not os.path.isdir(archive_dir):
+        os.makedirs(archive_dir)
     atomic_text(config_path, json.dumps(config, ensure_ascii=True, indent=2) + "\n")
-    atomic_text(audit_path, json.dumps({
-        "target_date": target, "source_date": source,
-        "universe_count": len(basic_rows), "accepted_count": len(instruments),
-        "rejected_count": len(rejected), "history_amount_days": 5,
-        "instruments": audit,
-    }, ensure_ascii=True, indent=2) + "\n")
-    atomic_text(rejected_path, json.dumps({
-        "target_date": target, "rejected": rejected,
-    }, ensure_ascii=True, indent=2) + "\n")
-    rows = ["instrument_id,name,market\n"]
-    for code in instruments:
-        meta = basic_rows[code + ".SZ"]
-        rows.append("{},{},{}\n".format(code + ".SZ", meta.get("name", ""), meta.get("market", "")))
-    atomic_text(universe_path, "".join(rows))
+    md_config = {
+        "md": {"sze": {
+            "batch": 256,
+            "use_subscribe_filter": False,
+            "subscribe_all": True,
+            "symbols": [],
+            "recoverable_pipeline": {
+                "enabled": True,
+                "backend": "socket",
+                "trading_day": int(target),
+                "journal_directory": "/home/zane/data/sze_journal_{}".format(target),
+                "journal_prefix": "sze_all",
+                "journal_segment_mb": 4096,
+                "journal_max_payload_bytes": 128,
+                "journal_min_free_gb_after_allocate": 200,
+                "flush_interval_ms": 100,
+                "flush_cpu": 6,
+                "shm_path": "/dev/shm/sze_all_{}.events".format(target),
+                "shm_capacity": 1048576,
+                "shm_max_payload_bytes": 128,
+                "replace_stale_shm": True,
+                "unlink_shm_on_clean_shutdown": False,
+                "malformed_diagnostic_path": "/home/zane/data/sze_journal_{}/sze_all_{}_malformed.bin".format(target, target),
+                "malformed_diagnostic_max_records": 1000,
+            },
+            "channels": [{
+                "multicast_ip": "239.35.81.1",
+                "port": 37101,
+                "iface_ip": "11.11.11.11",
+                "ifname": "hqh-p1-k2",
+                "bind_ip": "0.0.0.0",
+                "bind_port": 37101,
+                "cpu": 5,
+                "rcvbuf_mb": 256,
+                "busy_poll_us": 0,
+                "realtime_prio": 0,
+            }],
+        }}}
+    if args.emit_md_config:
+        atomic_text(md_path, json.dumps(md_config, ensure_ascii=True, indent=2) + "\n")
+    main_config = {
+        "base_rid": 1200000,
+        "vmd": [],
+        "vtd": [],
+        "vstr": [{
+            "lib": "./libt0_strategy_sze.so",
+            "config": "./configs/config_sze_daily_{}.json".format(target),
+        }],
+        "zmq": "tcp://127.0.0.1:6566",
+    }
+    atomic_text(main_path, json.dumps(main_config, ensure_ascii=True, indent=2) + "\n")
+    if archive_dir:
+        audit_path = os.path.join(archive_dir, "static_audit_{}.json".format(target))
+        rejected_path = os.path.join(archive_dir, "rejected_{}.json".format(target))
+        universe_path = os.path.join(archive_dir, "universe_{}.csv".format(target))
+        atomic_text(audit_path, json.dumps({
+            "target_date": target, "source_date": source,
+            "universe_count": len(basic_rows), "accepted_count": len(instruments),
+            "rejected_count": len(rejected), "history_amount_days": 5,
+            "instruments": audit,
+        }, ensure_ascii=True, indent=2) + "\n")
+        atomic_text(rejected_path, json.dumps({
+            "target_date": target, "rejected": rejected,
+        }, ensure_ascii=True, indent=2) + "\n")
+        rows = ["instrument_id,name,market\n"]
+        for code in instruments:
+            meta = basic_rows[code + ".SZ"]
+            rows.append("{},{},{}\n".format(code + ".SZ", meta.get("name", ""), meta.get("market", "")))
+        atomic_text(universe_path, "".join(rows))
     print("target_date={}".format(target))
     print("source_date={}".format(source))
     print("universe={}".format(len(basic_rows)))
     print("accepted={}".format(len(instruments)))
     print("rejected={}".format(len(rejected)))
     print("config={}".format(config_path))
+    print("main={}".format(main_path))
 
 
 if __name__ == "__main__":

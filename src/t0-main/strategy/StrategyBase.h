@@ -193,7 +193,14 @@ private:
     bool mRiskReadyLogged = false;
     bool mSzeLiveRoutingEnabled = false;
     std::unordered_set<std::string> mSzeLivePositionReady;
+    int mSzePositionRetryIntervalMs = 5000;
+    int mSzePositionCutoffHhmmss = 93100;
+    bool mSzePositionRetryScheduled = false;
+    bool mSzePositionCutoffApplied = false;
     void request_startup_risk_state();
+    void schedule_startup_position_retry();
+    void retry_or_finalize_startup_positions();
+    void finalize_unresolved_startup_positions(const char* reason);
     bool is_risk_data_ready() const;
 
     struct SnapshotLegacy15RuntimeState {
