@@ -263,16 +263,15 @@ int ZStrategy::insertOrder(RT_Order order) {
         return -1;
     }
     if (recovery_routing_) {
-        const int current_position = i_params.static_position + context.pi;
+        // T0 permits intraday buy/sell rotation. max_position is a per-order
+        // safety cap; net-position eligibility is checked before insertion.
         if (max_order_volume_ <= 0 || order.Volume > max_order_volume_ ||
-            (max_position_ > 0 && order.Direction == BUY &&
-             current_position + context.vl_pos + static_cast<int>(order.Volume) > max_position_) ||
-            (max_position_ > 0 && order.Direction == SELL &&
-             current_position - context.vs_pos - static_cast<int>(order.Volume) < 0)) {
+            (max_position_ > 0 && order.Volume > max_position_)) {
             KF_LOG_ERROR(logger, "[SZEOrderBlocked] InstrumentID=" << mTradeInstrument
                 << ", reason=position_or_volume_limit"
                 << ", volume=" << order.Volume
-                << ", current_position=" << current_position);
+                << ", max_order_volume=" << max_order_volume_
+                << ", max_position_per_order=" << max_position_);
             return -1;
         }
     }
@@ -594,8 +593,11 @@ int32_t ZStrategy::maxCanBuy() {
 }
 
 int32_t ZStrategy::maxCanSell() {
+    // T0 sell capacity includes today's filled buys, even when the
+    // broker reports zero sellable yesterday-position at startup.
+    const int32_t t0_sellable = getRemainingShortable() + context.cum_buy;
     const int32_t shortable_cap =
-        std::min(getRemainingShortable(), getPositionLimit() + context.pi) - context.vs_pos;
+        std::min(t0_sellable, getPositionLimit() + context.pi) - context.vs_pos;
     const int32_t available_cap = i_params.static_position + context.pi - context.vs_pos;
     return std::max<int32_t>(std::min(shortable_cap, available_cap), 0);
 }
