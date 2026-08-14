@@ -166,6 +166,7 @@ private:
                                    bool* duplicate);
     void mark_recovery_invalid(sze_recovery::InvalidReason reason,
                                std::uint64_t feed_sequence);
+    void mark_journal_degraded(const char* operation, int status);
     bool publish_recovery_event(DecodedEvent* event);
     void publish_recovery_metrics();
     bool initialize_malformed_diagnostics();
@@ -206,6 +207,8 @@ private:
     std::atomic<std::uint64_t> malformed_diagnostic_next_record_{0};
     std::atomic<bool> malformed_diagnostic_dirty_{false};
     std::atomic<bool> recovery_flush_running_{false};
+    std::atomic<bool> recovery_journal_degraded_{false};
+    std::atomic<std::uint64_t> recovery_ring_last_event_id_{0};
     std::atomic<bool> recovery_forced_invalid_{false};
     std::atomic<int> recovery_invalid_reason_{
         static_cast<int>(sze_recovery::kInvalidNone)};

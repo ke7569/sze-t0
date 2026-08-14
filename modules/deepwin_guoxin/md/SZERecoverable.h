@@ -56,6 +56,8 @@ enum ReadinessState {
     kReadinessLiveReady = 3,
 };
 
+static const std::uint32_t kRingFlagJournalDegraded = 1U << 0U;
+
 enum SequenceStatus {
     kSequenceFirst = 0,
     kSequenceAccepted = 1,
@@ -401,6 +403,7 @@ public:
                                  std::uint64_t flush_count,
                                  std::uint64_t published_offset,
                                  std::uint64_t flushed_offset);
+    void set_journal_degraded(bool degraded);
     void publish_replay_metrics(std::uint64_t replay_event_id,
                                 std::uint64_t replay_lag,
                                 std::uint64_t replay_rate_milli,

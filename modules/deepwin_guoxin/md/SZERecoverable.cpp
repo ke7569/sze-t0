@@ -497,52 +497,65 @@ JournalStatus JournalWriter::create_segment(std::uint32_t index,
             config_.min_free_bytes_after_allocate) {
         return kJournalIoError;
     }
-    fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0640);
-    if (fd_ < 0) {
+    const int new_fd = ::open(
+        path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0640);
+    if (new_fd < 0) {
         return kJournalIoError;
     }
-    const int allocation = ::posix_fallocate(fd_, 0,
+    const int allocation = ::posix_fallocate(new_fd, 0,
         static_cast<off_t>(config_.segment_bytes));
-    if (allocation != 0 && ::ftruncate(fd_, static_cast<off_t>(config_.segment_bytes)) != 0) {
-        ::close(fd_);
-        fd_ = -1;
+    if (allocation != 0 &&
+        ::ftruncate(new_fd, static_cast<off_t>(config_.segment_bytes)) != 0) {
+        ::close(new_fd);
+        (void)::unlink(path.c_str());
         return kJournalIoError;
     }
     void* memory = ::mmap(0, static_cast<std::size_t>(config_.segment_bytes),
-                          PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
+                          PROT_READ | PROT_WRITE, MAP_SHARED, new_fd, 0);
     if (memory == MAP_FAILED) {
-        ::close(fd_);
-        fd_ = -1;
+        ::close(new_fd);
+        (void)::unlink(path.c_str());
         return kJournalIoError;
     }
-    mapping_ = static_cast<unsigned char*>(memory);
-    superblock_ = reinterpret_cast<JournalSuperblock*>(mapping_);
-    std::memset(superblock_, 0, kPageBytes);
-    std::memcpy(superblock_->magic, kJournalMagic, 8);
-    superblock_->version = kFormatVersion;
-    superblock_->header_bytes = kPageBytes;
-    superblock_->trading_day = config_.trading_day;
-    superblock_->source_id = config_.source_id;
-    superblock_->segment_index = index;
-    superblock_->continuity_state = kContinuityInitializing;
-    superblock_->segment_bytes = config_.segment_bytes;
-    superblock_->generation = config_.generation;
-    superblock_->created_unix_ns = realtime_ns();
-    superblock_->first_event_id = first_event_id;
-    superblock_->last_committed_event_id = first_event_id > 0U ? first_event_id - 1U : 0U;
-    superblock_->published_offset = kPageBytes;
-    superblock_->flushed_offset = kPageBytes;
-    superblock_->clean_shutdown = 0U;
-    superblock_->invalid_reason = kInvalidNone;
+    unsigned char* new_mapping = static_cast<unsigned char*>(memory);
+    JournalSuperblock* new_superblock =
+        reinterpret_cast<JournalSuperblock*>(new_mapping);
+    std::memset(new_superblock, 0, kPageBytes);
+    std::memcpy(new_superblock->magic, kJournalMagic, 8);
+    new_superblock->version = kFormatVersion;
+    new_superblock->header_bytes = kPageBytes;
+    new_superblock->trading_day = config_.trading_day;
+    new_superblock->source_id = config_.source_id;
+    new_superblock->segment_index = index;
+    new_superblock->continuity_state = kContinuityInitializing;
+    new_superblock->segment_bytes = config_.segment_bytes;
+    new_superblock->generation = config_.generation;
+    new_superblock->created_unix_ns = realtime_ns();
+    new_superblock->first_event_id = first_event_id;
+    new_superblock->last_committed_event_id =
+        first_event_id > 0U ? first_event_id - 1U : 0U;
+    new_superblock->published_offset = kPageBytes;
+    new_superblock->flushed_offset = kPageBytes;
+    new_superblock->clean_shutdown = 0U;
+    new_superblock->invalid_reason = kInvalidNone;
+    if (::msync(new_mapping, kPageBytes, MS_SYNC) != 0 ||
+        ::fdatasync(new_fd) != 0) {
+        ::munmap(new_mapping, static_cast<std::size_t>(config_.segment_bytes));
+        ::close(new_fd);
+        (void)::unlink(path.c_str());
+        return kJournalIoError;
+    }
 
+    // Keep the old segment mapped until the replacement is fully allocated,
+    // initialized, and durable. Failed rotation remains retryable.
+    unmap_segment();
+    fd_ = new_fd;
+    mapping_ = new_mapping;
+    superblock_ = new_superblock;
     segment_index_ = index;
     write_offset_ = kPageBytes;
     flushed_offset_ = kPageBytes;
-    last_event_id_ = superblock_->last_committed_event_id;
-    if (::msync(mapping_, kPageBytes, MS_SYNC) != 0 || ::fdatasync(fd_) != 0) {
-        unmap_segment();
-        return kJournalIoError;
-    }
+    last_event_id_ = new_superblock->last_committed_event_id;
     return kJournalOk;
 }
 
@@ -652,7 +665,11 @@ JournalStatus JournalWriter::append(CanonicalEvent* event, const void* payload)
     if (total_bytes > config_.segment_bytes - kPageBytes) {
         return kJournalInvalidArgument;
     }
-    if (write_offset_ > config_.segment_bytes ||
+    const std::uint64_t usable_bytes = config_.segment_bytes - kPageBytes;
+    const std::uint64_t rotation_offset =
+        kPageBytes + (usable_bytes * 9U) / 10U;
+    if (write_offset_ >= rotation_offset ||
+        write_offset_ > config_.segment_bytes ||
         total_bytes > config_.segment_bytes - write_offset_) {
         const JournalStatus rotate_status = rotate();
         if (rotate_status != kJournalOk) {
@@ -765,7 +782,6 @@ JournalStatus JournalWriter::rotate()
     if (flush_status != kJournalOk) {
         return flush_status;
     }
-    unmap_segment();
     const JournalStatus create_status = create_segment(next_index, first_event);
     if (create_status != kJournalOk) {
         return create_status;
@@ -1361,6 +1377,20 @@ void ShmEventRing::publish_storage_metrics(std::uint64_t journal_events,
     atomic_store_release(&header_->flush_count, flush_count);
     atomic_store_release(&header_->journal_published_offset, published_offset);
     atomic_store_release(&header_->journal_flushed_offset, flushed_offset);
+}
+
+void ShmEventRing::set_journal_degraded(bool degraded)
+{
+    if (!producer_ || !header_) {
+        return;
+    }
+    std::uint32_t flags = atomic_load_acquire(&header_->flags);
+    if (degraded) {
+        flags |= kRingFlagJournalDegraded;
+    } else {
+        flags &= ~kRingFlagJournalDegraded;
+    }
+    atomic_store_release(&header_->flags, flags);
 }
 
 void ShmEventRing::publish_replay_metrics(std::uint64_t replay_event_id,

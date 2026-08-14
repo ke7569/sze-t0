@@ -769,6 +769,8 @@ bool MDEngineSZE::initialize_recovery()
     recovery_stats_.malformed_diagnostic_dropped.store(
         0U, std::memory_order_relaxed);
     recovery_forced_invalid_.store(false, std::memory_order_release);
+    recovery_journal_degraded_.store(false, std::memory_order_release);
+    recovery_ring_last_event_id_.store(0U, std::memory_order_release);
     recovery_invalid_reason_.store(
         static_cast<int>(sze_recovery::kInvalidNone), std::memory_order_release);
     recovery_latest_feed_sequence_.store(0U, std::memory_order_release);
@@ -833,6 +835,8 @@ bool MDEngineSZE::initialize_recovery()
     }
     recovery_latest_feed_sequence_.store(
         opened.last_feed_sequence, std::memory_order_release);
+    recovery_ring_last_event_id_.store(
+        opened.last_event_id, std::memory_order_release);
 
     std::unique_ptr<sze_recovery::ShmEventRing> ring(
         new sze_recovery::ShmEventRing());
@@ -866,6 +870,7 @@ bool MDEngineSZE::initialize_recovery()
     recovery_ring_->publish_state(
         initial_state, sze_recovery::kReadinessNotReady,
         initial_reason, opened.last_event_id, opened.last_feed_sequence);
+    recovery_ring_->set_journal_degraded(false);
 
     recovery_flush_running_.store(true, std::memory_order_release);
     try {
@@ -955,8 +960,8 @@ void MDEngineSZE::recovery_flush_loop()
         if (recovery_journal_ &&
             recovery_journal_->flush(false) != sze_recovery::kJournalOk) {
             recovery_stats_.flush_errors.fetch_add(1U, std::memory_order_relaxed);
-            mark_recovery_invalid(sze_recovery::kInvalidJournalCorruption,
-                recovery_latest_feed_sequence_.load(std::memory_order_acquire));
+            mark_journal_degraded("flush", static_cast<int>(
+                sze_recovery::kJournalIoError));
         }
         flush_malformed_diagnostics();
         publish_recovery_metrics();
@@ -985,6 +990,23 @@ void MDEngineSZE::mark_recovery_invalid(sze_recovery::InvalidReason reason,
             sze_recovery::kContinuityInvalid, sze_recovery::kReadinessNotReady,
             sticky_reason, recovery_ring_->latest_event_id(),
             feed_sequence);
+    }
+}
+
+void MDEngineSZE::mark_journal_degraded(const char* operation, int status)
+{
+    bool expected = false;
+    if (recovery_journal_degraded_.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel)) {
+        recovery_stats_.journal_errors.fetch_add(1U, std::memory_order_relaxed);
+        KF_LOG_ERROR(logger, "[recovery] journal degraded; keeping SHM live"
+            << " operation=" << (operation ? operation : "unknown")
+            << " status=" << status
+            << " segment=" << (recovery_journal_
+                ? recovery_journal_->segment_index() : 0U));
+    }
+    if (recovery_ring_) {
+        recovery_ring_->set_journal_degraded(true);
     }
 }
 
@@ -1043,9 +1065,8 @@ bool MDEngineSZE::observe_recovery_sequence(std::size_t index,
         : tracker.invalid_reason();
     if (recovery_journal_ && recovery_journal_->publish_continuity(
             state, reason, result.sequence) != sze_recovery::kJournalOk) {
-        recovery_stats_.journal_errors.fetch_add(1U, std::memory_order_relaxed);
-        mark_recovery_invalid(sze_recovery::kInvalidJournalCorruption,
-                              result.sequence);
+        mark_journal_degraded("publish_continuity", static_cast<int>(
+            sze_recovery::kJournalIoError));
     }
     if (recovery_ring_) {
         recovery_ring_->publish_continuity(
@@ -1066,14 +1087,22 @@ bool MDEngineSZE::publish_recovery_event(DecodedEvent* event)
         return !recovery_config_.enabled;
     }
     event->canonical.payload_size = static_cast<std::uint16_t>(event->raw_length);
-    if (recovery_journal_->append(&event->canonical, event->raw_record) !=
-            sze_recovery::kJournalOk) {
-        recovery_stats_.journal_errors.fetch_add(1U, std::memory_order_relaxed);
-        mark_recovery_invalid(sze_recovery::kInvalidJournalCorruption,
-                              event->canonical.feed_sequence);
-        return false;
+    if (!recovery_journal_degraded_.load(std::memory_order_acquire)) {
+        const sze_recovery::JournalStatus journal_status =
+            recovery_journal_->append(&event->canonical, event->raw_record);
+        if (journal_status != sze_recovery::kJournalOk) {
+            mark_journal_degraded("append", static_cast<int>(journal_status));
+        } else {
+            recovery_stats_.journal_events.fetch_add(1U,
+                std::memory_order_relaxed);
+            recovery_ring_last_event_id_.store(
+                event->canonical.event_id, std::memory_order_release);
+        }
     }
-    recovery_stats_.journal_events.fetch_add(1U, std::memory_order_relaxed);
+    if (recovery_journal_degraded_.load(std::memory_order_acquire)) {
+        event->canonical.event_id =
+            recovery_ring_last_event_id_.fetch_add(1U, std::memory_order_acq_rel) + 1U;
+    }
     if (!recovery_ring_->publish(event->canonical, event->raw_record)) {
         recovery_stats_.ring_errors.fetch_add(1U, std::memory_order_relaxed);
         mark_recovery_invalid(sze_recovery::kInvalidRingOverrun,

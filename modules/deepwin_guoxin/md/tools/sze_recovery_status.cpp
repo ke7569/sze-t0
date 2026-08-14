@@ -43,6 +43,9 @@ int main(int argc, char** argv)
                   static_cast<sze_recovery::InvalidReason>(
                       load_acquire(&header->invalid_reason)))
               << " readiness=" << load_acquire(&header->readiness_state)
+              << " journal_degraded="
+              << ((load_acquire(&header->flags) &
+                   sze_recovery::kRingFlagJournalDegraded) ? 1 : 0)
               << " latest_event_id=" << load_acquire(&header->latest_event_id)
               << " latest_feed_sequence="
               << load_acquire(&header->latest_feed_sequence)

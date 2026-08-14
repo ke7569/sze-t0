@@ -43,6 +43,8 @@ def main():
     r["trading_day"] = int(target)
     r["journal_directory"] = "/home/zane/data/sze_journal_{}".format(target)
     r["shm_path"] = "/dev/shm/sze_all_{}.events".format(target)
+    r["journal_segment_mb"] = 1024
+    r["journal_min_free_gb_after_allocate"] = 80
     r.setdefault("worker_count", len(WORKER_CPUS))
     r["worker_cpus"] = list(WORKER_CPUS)
     r["worker_state_cpus"] = list(WORKER_STATE_CPUS)
