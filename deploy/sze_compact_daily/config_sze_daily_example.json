@@ -1,0 +1,17 @@
+{
+  "trading_day": 20260817,
+  "static_data_source_date": 20260814,
+  "static_data_hash": "75403eed1ba36f26d8779f581ed86c8ce0428ed1db09160c50f39f6ea3a973cb",
+  "ins_params": {
+    "000001.SZ": {
+      "Date": 20260817,
+      "Close": 10,
+      "HistoryAmount": 200000000,
+      "FreeShare": 1000000000,
+      "HpUpperPrice": 11,
+      "HpLowerPrice": 9,
+      "HistoryVolatility20d": 0.02,
+      "static_position": 200
+    }
+  }
+}

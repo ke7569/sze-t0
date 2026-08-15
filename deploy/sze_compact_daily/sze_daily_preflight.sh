@@ -2,43 +2,39 @@
 set -euo pipefail
 
 ROOT="${ROOT:-/home/zane}"
-CONFIG_DIR="${CONFIG_DIR:-${ROOT}/configs}"
-DAILY_JSON="${1:-${DAILY_JSON:-}}"
-if [[ -z "$DAILY_JSON" ]]; then
-  DAILY_JSON="$(ls -1t "${CONFIG_DIR}"/config_sze_daily_*.json 2>/dev/null | head -n 1 || true)"
-fi
-MD_TEMPLATE="${MD_TEMPLATE:-${ROOT}/run_main/deepwin_sze_template.json}"
-MODEL="${MODEL:-${ROOT}/models/mix153060_sze_v04_a3_eff60.bin}"
+RUN_MAIN="${RUN_MAIN:-${ROOT}/run_main}"
+SYSTEM_JSON="${SZE_SYSTEM_JSON:-${ROOT}/configs/general_config/sze_system.json}"
+PREPARE="${SZE_PREPARE_BIN:-${RUN_MAIN}/prepare_sze_runtime.py}"
+MODE="${1:-strategy}"
+DAY="${TRADING_DAY:-$(date +%Y%m%d)}"
+DAILY_JSON="${2:-${SZE_DAILY_JSON:-${ROOT}/configs/config_sze_daily_${DAY}.json}}"
 
-python3 - "$DAILY_JSON" "$MD_TEMPLATE" "$MODEL" <<'PY'
-import hashlib
-import json
-import os
-import sys
-
-daily_path, md_path, model_path = sys.argv[1:]
-daily = json.load(open(daily_path))
-md = json.load(open(md_path))
-day = int(daily["trading_day"])
-assert daily["market"] == "SZ"
-assert daily["sze_startup_warmup_signals"] >= 0
-assert daily["worker_count"] == len(daily["worker_cpus"])
-assert daily["worker_count"] == len(daily["worker_state_cpus"])
-assert len(set(daily["worker_cpus"])) == daily["worker_count"]
-assert len(set(daily["worker_state_cpus"])) == daily["worker_count"]
-assert set(daily["worker_cpus"]).isdisjoint(daily["worker_state_cpus"])
-for code, params in daily["ins_params"].items():
-    assert int(params["Date"]) == day, (code, params["Date"], day)
-    assert int(params["cpu"]) in daily["worker_cpus"], (code, params["cpu"])
-assert daily["sze_recovery_consumer"]["trading_day"] == day
-pipe = md["md"]["sze"]["recoverable_pipeline"]
-assert pipe["journal_prefix"] == daily["sze_recovery_consumer"]["journal_prefix"]
-assert int(pipe["journal_max_payload_bytes"]) == 128
-assert os.path.isfile(model_path)
-actual = hashlib.sha256(open(model_path, "rb").read()).hexdigest()
-assert actual == daily["mix153060_model_sha256"], (actual, daily["mix153060_model_sha256"])
-print(json.dumps({"ok": True, "trading_day": day,
-                  "instruments": len(daily["ins_params"]),
-                  "workers": daily["worker_count"],
-                  "model_sha256": actual}, separators=(",", ":")))
-PY
+[[ -f "$SYSTEM_JSON" ]] || { echo "missing fixed system config: $SYSTEM_JSON" >&2; exit 1; }
+[[ -f "$PREPARE" ]] || { echo "missing runtime planner: $PREPARE" >&2; exit 1; }
+case "$MODE" in
+  capture)
+    python3 "$PREPARE" validate-system --system "$SYSTEM_JSON" --day "$DAY"
+    ;;
+  strategy)
+    if [[ ! -f "$DAILY_JSON" && -e "${ROOT}/configs/current" ]]; then
+      DAILY_JSON="${ROOT}/configs/current"
+    fi
+    [[ -f "$DAILY_JSON" ]] || { echo "missing exact-date daily config: $DAILY_JSON" >&2; exit 1; }
+    PREPARE_ARGS=(validate --system "$SYSTEM_JSON" --daily "$DAILY_JSON" --day "$DAY")
+    [[ "${SZE_ALLOW_LEGACY_DAILY:-0}" == "1" ]] && PREPARE_ARGS+=(--allow-legacy-daily)
+    python3 "$PREPARE" "${PREPARE_ARGS[@]}"
+    ;;
+  trade)
+    if [[ ! -f "$DAILY_JSON" && -e "${ROOT}/configs/current" ]]; then
+      DAILY_JSON="${ROOT}/configs/current"
+    fi
+    [[ -f "$DAILY_JSON" ]] || { echo "missing exact-date daily config: $DAILY_JSON" >&2; exit 1; }
+    PREPARE_ARGS=(validate-trade --system "$SYSTEM_JSON" --daily "$DAILY_JSON" --day "$DAY")
+    [[ "${SZE_ALLOW_LEGACY_DAILY:-0}" == "1" ]] && PREPARE_ARGS+=(--allow-legacy-daily)
+    python3 "$PREPARE" "${PREPARE_ARGS[@]}"
+    ;;
+  *)
+    echo "usage: $0 capture|strategy|trade [DAILY_JSON]" >&2
+    exit 2
+    ;;
+esac

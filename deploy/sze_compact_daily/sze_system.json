@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "market": "SZ",
+  "paths": {
+    "root": "/home/zane",
+    "run_main": "/home/zane/run_main",
+    "main_bin": "/home/zane/bin/main",
+    "runtime_root": "/run/sze",
+    "journal_directory_pattern": "/home/zane/data/sze_journal_{trading_day}",
+    "shm_path_pattern": "/dev/shm/sze_all_{trading_day}.events"
+  },
+  "model": {
+    "path": "/home/zane/models/mix153060_sze_v04_a3_eff60.bin",
+    "sha256": "ce5bf6378a45e9a90f1f00607cc1ced4c31a80b1d99ac0e58d28c2745f14ce6d"
+  },
+  "market_schedule": {
+    "timezone": "Asia/Shanghai",
+    "capture_start": "08:50:00",
+    "prediction_start": "09:05:00",
+    "call_auction_start": "09:15:00",
+    "call_auction_end": "09:25:00",
+    "continuous_auction_start": "09:30:00",
+    "stop": "15:01:00"
+  },
+  "cpu_affinity": {
+    "capture_receive_cpu": 5,
+    "journal_flush_cpu": 6,
+    "recovery_strategy_cpus": [16, 17, 18, 19, 20, 21, 22, 23],
+    "recovery_state_cpus": [24, 25, 26, 27, 28, 29, 30, 31],
+    "td_receive_cpu": 36,
+    "td_send_cpu": 37,
+    "snapshot_receive_cpu": 38,
+    "prediction_strategy_cpu": 42,
+    "prediction_state_cpu": 43
+  },
+  "market_data": {
+    "source_id": 88,
+    "batch": 256,
+    "use_subscribe_filter": false,
+    "subscribe_all": true,
+    "symbols": [],
+    "channels": [
+      {
+        "multicast_ip": "239.35.81.1",
+        "port": 37101,
+        "iface_ip": "11.11.11.11",
+        "ifname": "hqh-p1-k2",
+        "bind_ip": "0.0.0.0",
+        "bind_port": 37101,
+        "cpu": 5,
+        "rcvbuf_mb": 256,
+        "busy_poll_us": 0,
+        "realtime_prio": 0
+      }
+    ]
+  },
+  "recovery": {
+    "backend": "socket",
+    "shard_count": 8,
+    "journal_prefix": "sze_all",
+    "journal_segment_mb": 1024,
+    "journal_max_payload_bytes": 128,
+    "journal_min_free_gb_after_allocate": 80,
+    "flush_interval_ms": 100,
+    "shm_capacity": 1048576,
+    "malformed_diagnostic_max_records": 1000
+  },
+  "prediction": {
+    "recovery_mode": "hp-shadow",
+    "startup_warmup_signals": 50,
+    "output_directory_pattern": "/home/zane/run_main/log/sze_all_{trading_day}",
+    "output_format": "sze_log",
+    "detail_instruments": ["000001.SZ"],
+    "flush_rows": 4096,
+    "flush_interval_ms": 1000,
+    "log_batch_bytes": 1048576,
+    "log_queue_bytes": 268435456,
+    "global_params": {
+      "offset": 1.0,
+      "quote_offset": 5,
+      "bias_factor": 0.5,
+      "position_limit": 0.3,
+      "global_bias_factor": 1.0,
+      "position_base_line": 100000.0
+    }
+  },
+  "trade": {
+    "enabled": true,
+    "mode": "hp-realtime",
+    "td_source_id": 180,
+    "credentials_path": "/home/zane/configs/general_config/td_credentials.json",
+    "output_directory_pattern": "/home/zane/run_main/log/sze_recovery_trade_{trading_day}",
+    "global_params": {
+      "offset": 1.0,
+      "quote_offset": 5,
+      "bias_factor": 0.5,
+      "position_limit": 1.0,
+      "global_bias_factor": 1.0,
+      "position_base_line": 100000.0
+    },
+    "order_routing": {
+      "enabled": true,
+      "mode": "live",
+      "input_mode": "recovery_handoff",
+      "max_order_volume": 200,
+      "max_position": 200
+    }
+  }
+}
