@@ -1,4 +1,5 @@
 #include "../SZERecoverable.h"
+#include "../SZEHealthState.h"
 
 #include <cstdint>
 #include <iostream>
@@ -66,7 +67,21 @@ int main(int argc, char** argv)
               << " handoff_retries=" << load_acquire(&header->handoff_retries)
               << " ring_overruns=" << load_acquire(&header->ring_overruns)
               << " recovery_elapsed_ms="
-              << load_acquire(&header->recovery_elapsed_ms)
-              << std::endl;
+              << load_acquire(&header->recovery_elapsed_ms);
+    sze_health::HealthReader health;
+    if (health.open_capture(sze_health::capture_health_path(argv[1]))) {
+        const sze_health::CaptureHealthPage* state = health.capture();
+        std::cout << " health_state_present=1"
+                  << " feed_health=" << load_acquire(&state->feed_state)
+                  << " feed_failure_scope="
+                  << load_acquire(&state->feed_failure_scope)
+                  << " journal_health=" << load_acquire(&state->journal_state)
+                  << " ring_health=" << load_acquire(&state->ring_state)
+                  << " health_heartbeat_mono_ns="
+                  << load_acquire(&state->heartbeat_mono_ns);
+    } else {
+        std::cout << " health_state_present=0";
+    }
+    std::cout << std::endl;
     return 0;
 }

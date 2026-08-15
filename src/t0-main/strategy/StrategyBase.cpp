@@ -1037,6 +1037,31 @@ void StrategyBase::parse_sze_recovery_consumer_config(const json& config) {
     if (item != value.end() && item->is_number()) {
         mSzeRecoveryConsumerConfig.strategy_cpu = item->get<int>();
     }
+    item = value.find("health_state_enabled");
+    if (item != value.end() && !item->is_boolean()) {
+        throw std::runtime_error("health_state_enabled must be boolean");
+    }
+    mSzeRecoveryConsumerConfig.health_state_enabled =
+        item != value.end() && item->is_boolean() && item->get<bool>();
+    item = value.find("shard_id");
+    if (item != value.end() && item->is_number()) {
+        mSzeRecoveryConsumerConfig.shard_id = item->get<std::uint32_t>();
+    }
+    item = value.find("shard_count");
+    if (item != value.end() && item->is_number()) {
+        mSzeRecoveryConsumerConfig.shard_count = item->get<std::uint32_t>();
+    }
+    item = value.find("health_state_path");
+    if (item != value.end() && item->is_string()) {
+        mSzeRecoveryConsumerConfig.health_state_path = item->get<std::string>();
+    }
+    if (mSzeRecoveryConsumerConfig.health_state_enabled &&
+        mSzeRecoveryConsumerConfig.health_state_path.empty()) {
+        mSzeRecoveryConsumerConfig.health_state_path =
+            sze_health::shard_health_path(
+                mSzeRecoveryConsumerConfig.shm_path,
+                mSzeRecoveryConsumerConfig.shard_id);
+    }
 
     json::const_iterator md_sources = config.find("md_source_index");
     if ((md_sources != config.end() && md_sources->is_array() &&
@@ -1057,7 +1082,12 @@ void StrategyBase::parse_sze_recovery_consumer_config(const json& config) {
         mSzeRecoveryConsumerConfig.strategy_cpu < 0 ||
         mSzeRecoveryConsumerConfig.strategy_cpu >= CPU_SETSIZE ||
         mSzeRecoveryConsumerConfig.state_cpu ==
-            mSzeRecoveryConsumerConfig.strategy_cpu) {
+            mSzeRecoveryConsumerConfig.strategy_cpu ||
+        (mSzeRecoveryConsumerConfig.health_state_enabled &&
+         (mSzeRecoveryConsumerConfig.shard_count == 0U ||
+          mSzeRecoveryConsumerConfig.shard_id >=
+              mSzeRecoveryConsumerConfig.shard_count ||
+          mSzeRecoveryConsumerConfig.health_state_path.empty()))) {
         throw std::runtime_error("invalid sze_recovery_consumer configuration");
     }
     for (std::unordered_map<std::string, InsParams>::const_iterator it =
@@ -1196,6 +1226,7 @@ bool StrategyBase::process_sze_recovery_event(
             receive_time = static_cast<long>(local_time_us);
         }
     }
+    mSzeCurrentRecoveryEventId = event.event_id;
     if (decoded == sze_md::DecodeStatus::kOrder) {
         if (mInsParamsMap.find(NormalizeInstrumentId(order.InstrumentID)) ==
             mInsParamsMap.end()) {
@@ -1330,7 +1361,8 @@ void StrategyBase::sze_recovery_consumer_loop() {
     sze_recovery::ReplayOpenStatus last_open_status =
         sze_recovery::kReplayOpenNotAttempted;
     while (mSzeRecoveryConsumerRunning.load(std::memory_order_acquire) &&
-           !consumer.open(journal_config, mSzeRecoveryConsumerConfig.shm_path)) {
+           !consumer.open(journal_config, mSzeRecoveryConsumerConfig.shm_path,
+                          !mSzeRecoveryConsumerConfig.health_state_enabled)) {
         if (consumer.last_open_status() != last_open_status) {
             last_open_status = consumer.last_open_status();
             std::cerr << "[SZRecovery] consumer_attached=0 open_status="
@@ -1359,6 +1391,39 @@ void StrategyBase::sze_recovery_consumer_loop() {
         << " journal=" << mSzeRecoveryConsumerConfig.journal_directory
         << " shm=" << mSzeRecoveryConsumerConfig.shm_path);
     initialize_sze_recovery_clock_mapping();
+    if (mSzeRecoveryConsumerConfig.health_state_enabled) {
+        std::vector<std::uint32_t> health_symbols;
+        health_symbols.reserve(mInsParamsMap.size());
+        for (std::unordered_map<std::string, InsParams>::const_iterator item =
+                 mInsParamsMap.begin(); item != mInsParamsMap.end(); ++item) {
+            const std::uint32_t symbol_id =
+                sze_health::parse_symbol_id(item->first.c_str());
+            if (symbol_id < 1000000U) health_symbols.push_back(symbol_id);
+        }
+        std::unique_ptr<sze_health::RecoveryShardHealthWriter> writer(
+            new sze_health::RecoveryShardHealthWriter());
+        if (!writer->create(
+                mSzeRecoveryConsumerConfig.health_state_path,
+                mSzeRecoveryConsumerConfig.trading_day,
+                mSzeRecoveryConsumerConfig.source_id,
+                consumer.generation(),
+                mSzeRecoveryConsumerConfig.shard_id,
+                mSzeRecoveryConsumerConfig.shard_count,
+                health_symbols, true)) {
+            KF_LOG_ERROR(logger, "[SZRecovery] failed to create shard health page"
+                << " path=" << mSzeRecoveryConsumerConfig.health_state_path);
+            consumer.close();
+            mSzeRecoveryConsumerAttached.store(false, std::memory_order_release);
+            mSzeRecoveryConsumerRunning.store(false, std::memory_order_release);
+            return;
+        }
+        mSzeRecoveryHealthWriter = std::move(writer);
+        mSzeRecoveryHealthWriter->publish_shard(
+            sze_recovery::kReadinessReplaying, sze_health::kHealthHealthy,
+            0U, consumer.next_event_id() > 0U ? consumer.next_event_id() - 1U : 0U,
+            0U, consumer.latest_feed_sequence(), consumer.replay_lag(),
+            0U, consumer.ring_overruns(), 0U);
+    }
     mSzeRecoveryContinuityValid.store(
         consumer.mode() != sze_recovery::kReplayInvalid,
         std::memory_order_release);
@@ -1383,6 +1448,23 @@ void StrategyBase::sze_recovery_consumer_loop() {
             : 0U;
         consumer.publish_metrics(
             rate_milli, (now_ns - recovery_start_ns) / 1000000ULL);
+        if (mSzeRecoveryHealthWriter) {
+            const sze_recovery::ReadinessState readiness =
+                consumer.mode() == sze_recovery::kReplayLive
+                    ? sze_recovery::kReadinessLiveReady
+                    : (consumer.mode() == sze_recovery::kReplayHandoff
+                       ? sze_recovery::kReadinessHandoff
+                       : sze_recovery::kReadinessReplaying);
+            mSzeRecoveryHealthWriter->publish_shard(
+                readiness,
+                consumer.mode() == sze_recovery::kReplayInvalid
+                    ? sze_health::kHealthFailed : sze_health::kHealthHealthy,
+                0U,
+                consumer.next_event_id() > 0U
+                    ? consumer.next_event_id() - 1U : 0U,
+                events, consumer.latest_feed_sequence(), consumer.replay_lag(),
+                rate_milli, consumer.ring_overruns(), events);
+        }
         last_metric_ns = now_ns;
         last_metric_events = events;
     };
@@ -1416,6 +1498,18 @@ void StrategyBase::sze_recovery_consumer_loop() {
             KF_LOG_ERROR(logger, "[SZRecovery] consumer invalid"
                 << " status=" << static_cast<int>(status)
                 << " next_event_id=" << consumer.next_event_id());
+            if (mSzeRecoveryHealthWriter) {
+                mSzeRecoveryHealthWriter->publish_shard(
+                    sze_recovery::kReadinessNotReady,
+                    sze_health::kHealthFailed,
+                    static_cast<std::uint32_t>(status),
+                    consumer.next_event_id() > 0U
+                        ? consumer.next_event_id() - 1U : 0U,
+                    mSzeRecoveryEvents.load(std::memory_order_relaxed),
+                    consumer.latest_feed_sequence(), consumer.replay_lag(),
+                    0U, consumer.ring_overruns(),
+                    mSzeRecoveryEvents.load(std::memory_order_relaxed));
+            }
             // Invalid data is observed rather than traded. Avoid burning a core
             // after a terminal continuity/ring failure while capture continues.
             struct timespec invalid_delay = {0, 10000000L};
@@ -1445,6 +1539,15 @@ void StrategyBase::sze_recovery_consumer_loop() {
         publish_recovery_metrics();
     }
     consumer.close();
+    if (mSzeRecoveryHealthWriter) {
+        mSzeRecoveryHealthWriter->publish_shard(
+            sze_recovery::kReadinessNotReady, sze_health::kHealthFailed,
+            static_cast<std::uint32_t>(sze_recovery::kInvalidReceiverStopped),
+            0U, mSzeRecoveryEvents.load(std::memory_order_relaxed), 0U, 0U, 0U,
+            0U, mSzeRecoveryEvents.load(std::memory_order_relaxed));
+        mSzeRecoveryHealthWriter->close();
+        mSzeRecoveryHealthWriter.reset();
+    }
     mSzeRecoveryConsumerAttached.store(false, std::memory_order_release);
     KF_LOG_INFO(logger, "[SZRecovery] consumer stopped"
         << " events=" << mSzeRecoveryEvents.load(std::memory_order_relaxed)
@@ -1826,6 +1929,24 @@ mix153060::Runtime* StrategyBase::mix153060_runtime_for(const std::string& code)
     return it == mMix153060RuntimeMap.end() ? 0 : it->second.get();
 }
 
+#ifdef T0_SZE_STRATEGY_ONLY
+void StrategyBase::update_sze_book_health(const std::string& code,
+                                          mix153060::Runtime* runtime) {
+    if (!mSzeRecoveryHealthWriter || !runtime) return;
+    const std::uint32_t symbol_id = sze_health::parse_symbol_id(code.c_str());
+    if (symbol_id >= 1000000U) return;
+    const std::uint64_t now_ns = sze_recovery::monotonic_time_ns();
+    if (runtime->available()) {
+        mSzeRecoveryHealthWriter->publish_book_valid_once(
+            symbol_id, mSzeCurrentRecoveryEventId, now_ns);
+    } else {
+        mSzeRecoveryHealthWriter->publish_book(
+            symbol_id, sze_health::kBookInvalid, 1U,
+            mSzeCurrentRecoveryEventId, now_ns);
+    }
+}
+#endif
+
 void StrategyBase::process_mix153060_order(const std::string& code,
                                            const LFL2OrderField* data,
                                            short source,
@@ -1844,6 +1965,9 @@ void StrategyBase::process_mix153060_order(const std::string& code,
         mix153060::normalize_order_event(
             *data, params_it->second.Date, rcv_time, &event, &reason);
         runtime->invalidate();
+#ifdef T0_SZE_STRATEGY_ONLY
+        update_sze_book_health(code, runtime);
+#endif
         ++mMix153060AdapterRejectCount;
         KF_LOG_ERROR(logger, "[SZ][prediction] order adapter rejected instrument="
                              << code << " app_sequence=" << data->ApplSeqNum
@@ -1857,6 +1981,9 @@ void StrategyBase::process_mix153060_order(const std::string& code,
                                 mMix153060Capture->detail_enabled_for(code);
     mix153060::EventTiming timing;
     runtime->on_order(event, &samples, capture_detail ? &timing : 0);
+#ifdef T0_SZE_STRATEGY_ONLY
+    update_sze_book_health(code, runtime);
+#endif
     if (capture_detail) {
         mix153060::OrderEvent resolved_market;
         bool from_linked_fill = false;
@@ -1908,6 +2035,9 @@ void StrategyBase::process_mix153060_trade(const std::string& code,
         mix153060::normalize_trade_event(
             *data, params_it->second.Date, rcv_time, &event, &reason);
         runtime->invalidate();
+#ifdef T0_SZE_STRATEGY_ONLY
+        update_sze_book_health(code, runtime);
+#endif
         ++mMix153060AdapterRejectCount;
         KF_LOG_ERROR(logger, "[SZ][prediction] trade adapter rejected instrument="
                              << code << " app_sequence=" << data->ApplSeqNum
@@ -1921,6 +2051,9 @@ void StrategyBase::process_mix153060_trade(const std::string& code,
                                 mMix153060Capture->detail_enabled_for(code);
     mix153060::EventTiming timing;
     runtime->on_trade(event, &samples, capture_detail ? &timing : 0);
+#ifdef T0_SZE_STRATEGY_ONLY
+    update_sze_book_health(code, runtime);
+#endif
     if (capture_detail) {
         mix153060::OrderEvent resolved_market;
         bool from_linked_fill = false;
@@ -2019,11 +2152,33 @@ void StrategyBase::consume_mix153060_samples(const std::string& code,
             if (runtime != 0) {
                 runtime->invalidate();
             }
+#ifdef T0_SZE_STRATEGY_ONLY
+            if (mSzeRecoveryHealthWriter) {
+                const std::uint32_t symbol_id =
+                    sze_health::parse_symbol_id(code.c_str());
+                if (symbol_id < 1000000U) {
+                    mSzeRecoveryHealthWriter->publish_prediction(
+                        symbol_id, sze_health::kPredictionInvalid, 1U,
+                        sze_recovery::monotonic_time_ns(), 0.0);
+                }
+            }
+#endif
             KF_LOG_ERROR(logger, "[SZ][prediction] prediction rejected instrument="
                                  << code << " row=" << sample.row_in_stock_day
                                  << "; instrument suppressed");
             return;
         }
+#ifdef T0_SZE_STRATEGY_ONLY
+        if (mSzeRecoveryHealthWriter) {
+            const std::uint32_t symbol_id =
+                sze_health::parse_symbol_id(code.c_str());
+            if (symbol_id < 1000000U) {
+                mSzeRecoveryHealthWriter->publish_prediction(
+                    symbol_id, sze_health::kPredictionHealthy, 0U,
+                    sze_recovery::monotonic_time_ns(), sample.turnover);
+            }
+        }
+#endif
         if (capture_enabled) {
             const std::uint64_t model_end = capture_detail ? sz_hp::latency_now_ns() : 0;
             mMix153060Capture->record_sample(

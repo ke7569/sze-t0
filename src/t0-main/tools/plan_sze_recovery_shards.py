@@ -92,6 +92,11 @@ def main():
         config["last_position"] = [0] * len(entries)
         config["ins_params"] = {entry[2]: params[entry[2]] for entry in entries}
         consumer = config["sze_recovery_consumer"]
+        consumer["shard_id"] = shard_id
+        consumer["shard_count"] = args.shards
+        consumer["health_state_enabled"] = True
+        consumer["health_state_path"] = "{}.shard.{}.health".format(
+            consumer["shm_path"], shard_id)
         if use_explicit_cpus:
             consumer["strategy_cpu"] = explicit_cpus[shard_id]
             consumer["state_cpu"] = args.state_cpu_base + args.shards + shard_id

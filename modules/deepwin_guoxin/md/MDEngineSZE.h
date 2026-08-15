@@ -4,6 +4,8 @@
 #include "IMDEngine.h"
 #include "SZEProtocol.h"
 #include "SZERecoverable.h"
+#include "SZEHealthState.h"
+#include "SZEDirectShardedRing.h"
 
 #include <atomic>
 #include <cstddef>
@@ -90,6 +92,9 @@ private:
         bool unlink_shm_on_clean_shutdown = true;
         std::string malformed_diagnostic_path;
         std::uint32_t malformed_diagnostic_max_records = 1000;
+        bool health_state_enabled = true;
+        std::string health_state_path;
+        sze_sharded_ring::DirectShardedRingConfig direct_sharded_ring;
     };
 
     struct RecoveryStats
@@ -130,7 +135,7 @@ private:
 
     struct DecodedEvent
     {
-        DecodedEvent() : type(0), raw_record(0), raw_length(0)
+        DecodedEvent() : type(0), symbol_id(1000000U), raw_record(0), raw_length(0)
         {
             std::memset(&order, 0, sizeof(order));
             std::memset(&trade, 0, sizeof(trade));
@@ -138,6 +143,7 @@ private:
         }
 
         std::uint8_t type;
+        std::uint32_t symbol_id;
         LFL2OrderField order;
         LFL2TradeField trade;
         sze_recovery::CanonicalEvent canonical;
@@ -197,6 +203,9 @@ private:
     RecoveryStats recovery_stats_;
     std::unique_ptr<sze_recovery::JournalWriter> recovery_journal_;
     std::unique_ptr<sze_recovery::ShmEventRing> recovery_ring_;
+    std::unique_ptr<sze_health::CaptureHealthWriter> recovery_health_;
+    std::unique_ptr<sze_sharded_ring::DirectShardedRingProducer>
+        recovery_sharded_rings_;
     std::vector<sze_recovery::FeedSequenceTracker> continuity_trackers_;
     std::thread recovery_flush_worker_;
     int malformed_diagnostic_fd_ = -1;
