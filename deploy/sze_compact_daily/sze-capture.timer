@@ -1,0 +1,10 @@
+[Unit]
+Description=Start Shenzhen capture before call auction
+
+[Timer]
+OnCalendar=*-*-* 08:50:00
+Persistent=false
+Unit=sze-capture.service
+
+[Install]
+WantedBy=timers.target

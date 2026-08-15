@@ -1,14 +1,14 @@
 [Unit]
-Description=Fixed Shenzhen daily recovery launcher
+Description=Shenzhen fixed recovery and prediction shards
 After=sze-capture.service
 Requires=sze-capture.service
 
 [Service]
 Type=simple
 WorkingDirectory=/home/zane/run_main
-ExecStart=/home/zane/bin/run_sze_recovery_launcher.sh
-ExecStartPre=/home/zane/bin/sze_daily_preflight.sh
-KillSignal=SIGTERM
+ExecStartPre=/home/zane/run_main/sze_daily_preflight.sh strategy
+ExecStart=/home/zane/run_main/run_sze_recovery_launcher.sh
+KillSignal=SIGINT
 TimeoutStopSec=120
 Restart=on-failure
 RestartSec=5

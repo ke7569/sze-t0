@@ -1,0 +1,10 @@
+[Unit]
+Description=Stop all Shenzhen processes after market close
+
+[Timer]
+OnCalendar=*-*-* 15:01:00
+Persistent=false
+Unit=sze-stop.service
+
+[Install]
+WantedBy=timers.target

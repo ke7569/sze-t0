@@ -1,0 +1,9 @@
+[Unit]
+Description=Start Shenzhen recovery, prediction, and trade
+After=sze-capture.service
+Requires=sze-capture.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=300
+ExecStart=/home/zane/run_main/start_sze_daily.sh

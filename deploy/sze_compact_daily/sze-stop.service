@@ -1,0 +1,9 @@
+[Unit]
+Description=Stop all Shenzhen capture, prediction, and trade processes
+
+[Service]
+Type=oneshot
+TimeoutStartSec=300
+ExecStart=/usr/bin/systemctl stop sze-trade.service
+ExecStart=/usr/bin/systemctl stop sze-recovery.service
+ExecStart=/usr/bin/systemctl stop sze-capture.service

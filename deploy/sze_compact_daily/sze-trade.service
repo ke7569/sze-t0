@@ -1,0 +1,16 @@
+[Unit]
+Description=Shenzhen fixed realtime prediction and live TD
+After=sze-recovery.service
+Requires=sze-capture.service sze-recovery.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/zane/run_main
+ExecStartPre=/home/zane/run_main/sze_daily_preflight.sh trade
+ExecStart=/home/zane/run_main/run_sze_trade_daily.sh
+KillSignal=SIGINT
+TimeoutStopSec=60
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

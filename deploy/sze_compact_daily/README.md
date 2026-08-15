@@ -1,28 +1,108 @@
-# Shenzhen compact daily deployment
+# Shenzhen fixed-system deployment
 
-The fixed deployment contains the libraries, the MD template, the launcher,
-the preflight script, and the two fixed systemd units. Those files are copied
-once to `/home/zane/run_main` and `/etc/systemd/system`.
-
-Each trading day, replace only these two files:
+This deployment has two source configuration layers:
 
 ```text
-/home/zane/configs/config_sze_daily_YYYYMMDD.json
-/home/zane/configs/main_sze_daily_YYYYMMDD.conf
+/home/zane/configs/
+  general_config/
+    sze_system.json
+    td_credentials.json       # mode 0600, never copied into manifests/logs
+  config_sze_daily_YYYYMMDD.json
+  current -> config_sze_daily_YYYYMMDD.json
 ```
 
-Both files are dated business artifacts. The launcher automatically selects
-the newest `config_sze_daily_*.json`, or accepts an explicit path as its first
-argument. The fixed MD template, libraries, launcher and systemd units are
-deployed once.
+`sze_system.json` is fixed. It owns multicast/NIC settings, CPU placement,
+shard count, journal and SHM layout, model identity, sessions, output policy,
+prediction parameters, and trade/risk parameters. Do not date this file.
+At TD launch, `td_receive_cpu` and `td_send_cpu` are injected into both the
+engine-level and account-level ATP configuration, so private credentials
+cannot silently override the fixed CPU plan.
+Recovery-only shard configs are generated as `hp-shadow` with
+`capture_only=true`, because the strategy guard correctly forbids realtime
+routing without a TD source. The separate trade config is `hp-realtime`, has
+`trading_enabled=true`, and is the only generated config that can route orders.
 
-`config_sze_daily_YYYYMMDD.json` contains the trading day, all static inputs, journal/
-SHM paths, worker count, worker CPU/state CPU lists, per-instrument CPU owner,
-and model SHA256. `main_sze_daily_YYYYMMDD.conf` is the dated strategy entry point.
+The one daily JSON contains only:
 
-The launcher creates worker JSON/conf files under `/dev/shm` at runtime and
-deletes them on shutdown. They are not daily deployment artifacts.
+```text
+trading_day
+static_data_source_date
+static_data_hash
+ins_params
+```
 
-Research-only files (`static_audit_*.json`, `rejected_*.json`, and
-`universe_*.csv`) belong under an archive directory and are not required by
-production preflight.
+`static_data_hash` is SHA256 over canonical compact JSON for `ins_params`
+(`sort_keys=True`, separators `,` and `:`, ASCII encoding). A symbol is in the
+trade universe exactly when its `static_position` is nonzero. There is no
+separate daily trade-symbol list. Daily `ins_params` must not contain `cpu` or
+`last_position`: CPU ownership is fixed and broker position is queried by TD;
+the generated compatibility strategy config initializes `last_position` to
+zero before that broker state arrives.
+
+## Runtime flow
+
+At 08:50, `sze-capture.timer` starts capture from the fixed system config. A
+missing daily config does not block capture. The generated Deepwin and main
+configs are stored under `/run/sze/YYYYMMDD/capture`.
+
+At 09:05, `sze-start.timer` validates the exact-date daily config, model hash,
+static-data hash, CPU ownership, and private credential permissions. It then
+generates recovery shard and trade files under
+`/run/sze/YYYYMMDD/strategy`. The generated files are runtime artifacts, not
+inputs and not research-server deliverables. Recovery/trade never select the
+"newest" config and never silently use yesterday's static data.
+
+At 15:01, `sze-stop.timer` stops trade, recovery, and capture in that order.
+The host timezone must remain `Asia/Shanghai`; the timer files intentionally
+use host-local wall clock syntax for compatibility with the production
+systemd version. The old systemd cannot parse weekday ranges, so timers fire
+daily. On holidays, capture may remain available while the absent exact-date
+daily config prevents prediction and trading.
+
+## Missing daily policy
+
+- Capture starts and journals the full feed.
+- Recovery/prediction wait in failed preflight and alert.
+- TD does not start and no order can be submitted.
+- A stale daily file is rejected even if `/home/zane/configs/current` points to it.
+- Legacy all-in-one daily files require the explicit temporary environment
+  variable `SZE_ALLOW_LEGACY_DAILY=1`; remove this escape hatch after migration.
+
+## Installation
+
+Install fixed files once:
+
+```bash
+install -m 0644 sze_system.json /home/zane/configs/general_config/sze_system.json
+install -m 0755 prepare_sze_runtime.py /home/zane/run_main/prepare_sze_runtime.py
+install -m 0755 merge_sze_td_runtime.py /home/zane/run_main/merge_sze_td_runtime.py
+install -m 0755 run_sze_capture_daily.sh /home/zane/run_main/run_sze_capture_daily.sh
+install -m 0755 run_sze_recovery_launcher.sh /home/zane/run_main/run_sze_recovery_launcher.sh
+install -m 0755 run_sze_trade_daily.sh /home/zane/run_main/run_sze_trade_daily.sh
+install -m 0755 start_sze_daily.sh /home/zane/run_main/start_sze_daily.sh
+install -m 0755 sze_daily_preflight.sh /home/zane/run_main/sze_daily_preflight.sh
+```
+
+Install the fixed services/timers into `/etc/systemd/system`, run
+`systemctl daemon-reload`, and enable only:
+
+```bash
+systemctl enable sze-capture.timer sze-start.timer sze-stop.timer
+```
+
+Before production cutover, run a non-trading dry run and verify generated
+configs, process affinity, journal continuity, recovery lag, predictions, TD
+login/account queries, and a real-NIC latency comparison. The direct sharded
+ring prototype remains disabled until that separate validation is complete.
+The start coordinator waits for an atomic `recovery.ready` marker written only
+after every recovery worker survives its startup check; TD cannot race runtime
+generation.
+
+## Current HA boundary
+
+Only one physical host receives Shenzhen multicast, so this is not true HA.
+Keep one authoritative low-latency capture. A same-host raw UDP recorder may
+be added only after OpenOnload multicast duplication and latency are measured.
+Closed journal segments should be copied asynchronously to research storage
+with SHA256 verification. Any capture restart after a sequence gap must mark
+the day discontinuous and prohibit new trading risk.
