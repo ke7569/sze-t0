@@ -1421,6 +1421,11 @@ std::uint64_t ShmEventRing::latest_event_id() const
     return header_ ? atomic_load_acquire(&header_->latest_event_id) : 0U;
 }
 
+std::uint64_t ShmEventRing::latest_feed_sequence() const
+{
+    return header_ ? atomic_load_acquire(&header_->latest_feed_sequence) : 0U;
+}
+
 ContinuityState ShmEventRing::continuity_state() const
 {
     return header_ ? static_cast<ContinuityState>(
@@ -1437,7 +1442,8 @@ ReplayHandoffConsumer::ReplayHandoffConsumer()
     : reader_(), ring_(), mode_(kReplayInvalid),
       last_open_status_(kReplayOpenNotAttempted), next_event_id_(0U),
       generation_(0U), replayed_events_(0U), live_events_(0U),
-      handoff_retries_(0U), ring_overruns_(0U)
+      handoff_retries_(0U), ring_overruns_(0U),
+      publish_legacy_shared_readiness_(true)
 {
 }
 
@@ -1447,7 +1453,8 @@ ReplayHandoffConsumer::~ReplayHandoffConsumer()
 }
 
 bool ReplayHandoffConsumer::open(const JournalConfig& journal_config,
-                                 const std::string& shm_path)
+                                 const std::string& shm_path,
+                                 bool publish_legacy_shared_readiness)
 {
     close();
     last_open_status_ = kReplayOpenNotAttempted;
@@ -1476,12 +1483,17 @@ bool ReplayHandoffConsumer::open(const JournalConfig& journal_config,
     live_events_ = 0U;
     handoff_retries_ = 0U;
     ring_overruns_ = 0U;
+    publish_legacy_shared_readiness_ = publish_legacy_shared_readiness;
     if (ring_.continuity_state() == kContinuityInvalid) {
         mode_ = kReplayInvalid;
-        ring_.set_readiness(kReadinessNotReady);
+        if (publish_legacy_shared_readiness_) {
+            ring_.set_readiness(kReadinessNotReady);
+        }
     } else {
         mode_ = kReplayJournal;
-        ring_.set_readiness(kReadinessReplaying);
+        if (publish_legacy_shared_readiness_) {
+            ring_.set_readiness(kReadinessReplaying);
+        }
     }
     last_open_status_ = kReplayOpenOk;
     return true;
@@ -1489,7 +1501,7 @@ bool ReplayHandoffConsumer::open(const JournalConfig& journal_config,
 
 void ReplayHandoffConsumer::close()
 {
-    if (ring_.is_open()) {
+    if (ring_.is_open() && publish_legacy_shared_readiness_) {
         ring_.set_readiness(kReadinessNotReady);
     }
     reader_.close();
@@ -1502,7 +1514,9 @@ void ReplayHandoffConsumer::close()
 void ReplayHandoffConsumer::invalidate()
 {
     mode_ = kReplayInvalid;
-    ring_.set_readiness(kReadinessNotReady);
+    if (publish_legacy_shared_readiness_) {
+        ring_.set_readiness(kReadinessNotReady);
+    }
 }
 
 ReplayReadStatus ReplayHandoffConsumer::read_ring(
@@ -1529,7 +1543,9 @@ ReplayReadStatus ReplayHandoffConsumer::read_ring(
             return kReplayReadError;
         }
         mode_ = kReplayJournal;
-        ring_.set_readiness(kReadinessReplaying);
+        if (publish_legacy_shared_readiness_) {
+            ring_.set_readiness(kReadinessReplaying);
+        }
         return kReplayReadWouldBlock;
     }
     if (status != kRingReadOk) {
@@ -1539,7 +1555,9 @@ ReplayReadStatus ReplayHandoffConsumer::read_ring(
     }
     if (mode_ == kReplayHandoff) {
         mode_ = kReplayLive;
-        ring_.set_readiness(kReadinessLiveReady);
+        if (publish_legacy_shared_readiness_) {
+            ring_.set_readiness(kReadinessLiveReady);
+        }
     }
     ++next_event_id_;
     ++live_events_;
@@ -1577,7 +1595,9 @@ ReplayReadStatus ReplayHandoffConsumer::next(CanonicalEvent* event,
     const std::uint64_t latest = ring_.latest_event_id();
     if (next_event_id_ == latest + 1U) {
         mode_ = kReplayHandoff;
-        ring_.set_readiness(kReadinessHandoff);
+        if (publish_legacy_shared_readiness_) {
+            ring_.set_readiness(kReadinessHandoff);
+        }
         return read_ring(event, payload, payload_capacity);
     }
     return kReplayReadWouldBlock;
@@ -1591,9 +1611,11 @@ void ReplayHandoffConsumer::publish_metrics(std::uint64_t replay_rate_milli,
     const std::uint64_t latest = ring_.latest_event_id();
     const std::uint64_t lag = latest > replay_event
         ? latest - replay_event : 0U;
-    ring_.publish_replay_metrics(replay_event, lag, replay_rate_milli,
-                                 handoff_retries_, ring_overruns_,
-                                 recovery_elapsed_ms);
+    if (publish_legacy_shared_readiness_) {
+        ring_.publish_replay_metrics(replay_event, lag, replay_rate_milli,
+                                     handoff_retries_, ring_overruns_,
+                                     recovery_elapsed_ms);
+    }
 }
 
 }  // namespace sze_recovery

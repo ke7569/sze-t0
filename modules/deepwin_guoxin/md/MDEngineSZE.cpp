@@ -282,6 +282,57 @@ void MDEngineSZE::load_recovery_config(const json& j_config)
     recovery_config_.malformed_diagnostic_max_records =
         json_value_or<std::uint32_t>(
             config, "malformed_diagnostic_max_records", 1000U);
+    recovery_config_.health_state_enabled = json_value_or<bool>(
+        config, "health_state_enabled", true);
+    recovery_config_.health_state_path = json_value_or<std::string>(
+        config, "health_state_path", std::string());
+    if (recovery_config_.health_state_path.empty() &&
+        !recovery_config_.shm_path.empty()) {
+        recovery_config_.health_state_path =
+            sze_health::capture_health_path(recovery_config_.shm_path);
+    }
+    json::const_iterator sharded = config.find("direct_sharded_ring");
+    if (sharded != config.end()) {
+        if (!sharded->is_object()) {
+            throw std::runtime_error("direct_sharded_ring must be an object");
+        }
+        recovery_config_.direct_sharded_ring.enabled =
+            json_value_or<bool>(*sharded, "enabled", false);
+        recovery_config_.direct_sharded_ring.shard_count =
+            json_value_or<std::uint32_t>(*sharded, "shard_count", 0U);
+        recovery_config_.direct_sharded_ring.capacity_per_shard =
+            json_value_or<std::uint32_t>(
+                *sharded, "capacity_per_shard", recovery_config_.shm_capacity);
+        recovery_config_.direct_sharded_ring.max_payload_bytes =
+            json_value_or<std::uint32_t>(
+                *sharded, "max_payload_bytes",
+                recovery_config_.shm_max_payload_bytes);
+        json::const_iterator paths = sharded->find("paths");
+        if (paths != sharded->end() && paths->is_array()) {
+            for (json::const_iterator path = paths->begin(); path != paths->end(); ++path) {
+                if (!path->is_string()) {
+                    throw std::runtime_error("direct_sharded_ring paths must be strings");
+                }
+                recovery_config_.direct_sharded_ring.paths.push_back(
+                    path->get<std::string>());
+            }
+        }
+        json::const_iterator assignments = sharded->find("assignments");
+        if (assignments != sharded->end() && assignments->is_object()) {
+            for (json::const_iterator item = assignments->begin();
+                 item != assignments->end(); ++item) {
+                const std::uint32_t symbol_id =
+                    sze_health::parse_symbol_id(item.key().c_str());
+                if (symbol_id >= 1000000U || !item.value().is_number()) {
+                    throw std::runtime_error(
+                        "invalid direct_sharded_ring assignment");
+                }
+                recovery_config_.direct_sharded_ring.assignments.push_back(
+                    std::make_pair(symbol_id,
+                                   item.value().get<std::uint32_t>()));
+            }
+        }
+    }
 
     if (!recovery_config_.enabled) {
         return;
@@ -304,6 +355,18 @@ void MDEngineSZE::load_recovery_config(const json& j_config)
         recovery_config_.shm_max_payload_bytes > 65535U ||
         recovery_config_.malformed_diagnostic_max_records < 1U ||
         recovery_config_.malformed_diagnostic_max_records > 65536U ||
+        (recovery_config_.health_state_enabled &&
+         recovery_config_.health_state_path.empty()) ||
+        (recovery_config_.direct_sharded_ring.enabled &&
+         (recovery_config_.direct_sharded_ring.shard_count == 0U ||
+          recovery_config_.direct_sharded_ring.shard_count > 255U ||
+          recovery_config_.direct_sharded_ring.paths.size() !=
+              recovery_config_.direct_sharded_ring.shard_count ||
+          recovery_config_.direct_sharded_ring.assignments.empty() ||
+          recovery_config_.direct_sharded_ring.capacity_per_shard < 2U ||
+          recovery_config_.direct_sharded_ring.max_payload_bytes <
+              sizeof(sze_md::SzeHpfOrder) ||
+          recovery_config_.direct_sharded_ring.max_payload_bytes > 65535U)) ||
         !filter) {
         throw std::runtime_error(
             "invalid sze recoverable_pipeline configuration");
@@ -856,7 +919,71 @@ bool MDEngineSZE::initialize_recovery()
 
     recovery_journal_ = std::move(journal);
     recovery_ring_ = std::move(ring);
+    if (recovery_config_.health_state_enabled) {
+        std::unique_ptr<sze_health::CaptureHealthWriter> health(
+            new sze_health::CaptureHealthWriter());
+        if (!health->create(recovery_config_.health_state_path,
+                            recovery_config_.trading_day,
+                            static_cast<std::uint32_t>(kSzeSourceId),
+                            recovery_ring_->generation(),
+                            recovery_config_.replace_stale_shm)) {
+            KF_LOG_ERROR(logger, "[recovery] failed to create capture health page"
+                << " path=" << recovery_config_.health_state_path);
+            recovery_ring_->close();
+            recovery_ring_.reset();
+            recovery_journal_->close(true);
+            recovery_journal_.reset();
+            return false;
+        }
+        recovery_health_ = std::move(health);
+        recovery_health_->publish_feed(
+            initial_state == sze_recovery::kContinuityInvalid
+                ? sze_health::kHealthFailed : sze_health::kHealthHealthy,
+            initial_reason,
+            initial_state == sze_recovery::kContinuityInvalid
+                ? sze_health::kScopeGlobalFeed : sze_health::kScopeNone,
+            0U, opened.last_event_id, opened.last_feed_sequence);
+        recovery_health_->publish_journal(
+            sze_health::kHealthHealthy, 0U, 0U);
+        recovery_health_->publish_ring(sze_health::kHealthHealthy, 0U, 0U);
+    }
+    if (recovery_config_.direct_sharded_ring.enabled) {
+        recovery_config_.direct_sharded_ring.trading_day =
+            recovery_config_.trading_day;
+        recovery_config_.direct_sharded_ring.source_id =
+            static_cast<std::uint32_t>(kSzeSourceId);
+        recovery_config_.direct_sharded_ring.generation =
+            recovery_ring_->generation();
+        std::unique_ptr<sze_sharded_ring::DirectShardedRingProducer> sharded_rings(
+            new sze_sharded_ring::DirectShardedRingProducer());
+        if (!sharded_rings->create(recovery_config_.direct_sharded_ring)) {
+            KF_LOG_ERROR(logger, "[recovery] failed to create direct shard rings");
+            if (recovery_health_) recovery_health_->close();
+            recovery_health_.reset();
+            (void)::unlink(recovery_config_.health_state_path.c_str());
+            recovery_ring_->close();
+            recovery_ring_.reset();
+            recovery_journal_->close(true);
+            recovery_journal_.reset();
+            return false;
+        }
+        recovery_sharded_rings_ = std::move(sharded_rings);
+    }
     if (!initialize_malformed_diagnostics()) {
+        if (recovery_sharded_rings_) {
+            recovery_sharded_rings_->close();
+            recovery_sharded_rings_.reset();
+        }
+        if (recovery_health_) {
+            recovery_health_->close();
+            recovery_health_.reset();
+        }
+        (void)::unlink(recovery_config_.health_state_path.c_str());
+        for (std::vector<std::string>::const_iterator path =
+                 recovery_config_.direct_sharded_ring.paths.begin();
+             path != recovery_config_.direct_sharded_ring.paths.end(); ++path) {
+            (void)::unlink(path->c_str());
+        }
         recovery_ring_->close();
         recovery_ring_.reset();
         ::unlink(recovery_config_.shm_path.c_str());
@@ -878,6 +1005,20 @@ bool MDEngineSZE::initialize_recovery()
             &MDEngineSZE::recovery_flush_loop, this);
     } catch (...) {
         recovery_flush_running_.store(false, std::memory_order_release);
+        if (recovery_sharded_rings_) {
+            recovery_sharded_rings_->close();
+            recovery_sharded_rings_.reset();
+        }
+        if (recovery_health_) {
+            recovery_health_->close();
+            recovery_health_.reset();
+        }
+        (void)::unlink(recovery_config_.health_state_path.c_str());
+        for (std::vector<std::string>::const_iterator path =
+                 recovery_config_.direct_sharded_ring.paths.begin();
+             path != recovery_config_.direct_sharded_ring.paths.end(); ++path) {
+            (void)::unlink(path->c_str());
+        }
         recovery_ring_->close();
         recovery_ring_.reset();
         ::unlink(recovery_config_.shm_path.c_str());
@@ -924,6 +1065,15 @@ void MDEngineSZE::shutdown_recovery(bool clean_shutdown)
             feed_sequence);
         publish_recovery_metrics();
     }
+    if (recovery_sharded_rings_) {
+        recovery_sharded_rings_->close();
+        recovery_sharded_rings_.reset();
+    }
+    if (recovery_health_) {
+        recovery_health_->heartbeat();
+        recovery_health_->close();
+        recovery_health_.reset();
+    }
     if (recovery_journal_) {
         if (recovery_journal_->close(clean_shutdown) != sze_recovery::kJournalOk) {
             recovery_stats_.flush_errors.fetch_add(1U, std::memory_order_relaxed);
@@ -938,6 +1088,14 @@ void MDEngineSZE::shutdown_recovery(bool clean_shutdown)
     if (clean_shutdown && recovery_config_.enabled &&
         recovery_config_.unlink_shm_on_clean_shutdown) {
         (void)::unlink(recovery_config_.shm_path.c_str());
+        if (recovery_config_.health_state_enabled) {
+            (void)::unlink(recovery_config_.health_state_path.c_str());
+        }
+        for (std::vector<std::string>::const_iterator path =
+                 recovery_config_.direct_sharded_ring.paths.begin();
+             path != recovery_config_.direct_sharded_ring.paths.end(); ++path) {
+            (void)::unlink(path->c_str());
+        }
     }
     continuity_trackers_.clear();
 }
@@ -991,6 +1149,13 @@ void MDEngineSZE::mark_recovery_invalid(sze_recovery::InvalidReason reason,
             sticky_reason, recovery_ring_->latest_event_id(),
             feed_sequence);
     }
+    if (recovery_health_) {
+        recovery_health_->publish_feed(
+            sze_health::kHealthFailed, sticky_reason,
+            sze_health::kScopeGlobalFeed, 0U,
+            recovery_ring_ ? recovery_ring_->latest_event_id() : 0U,
+            feed_sequence);
+    }
 }
 
 void MDEngineSZE::mark_journal_degraded(const char* operation, int status)
@@ -1007,6 +1172,11 @@ void MDEngineSZE::mark_journal_degraded(const char* operation, int status)
     }
     if (recovery_ring_) {
         recovery_ring_->set_journal_degraded(true);
+    }
+    if (recovery_health_) {
+        recovery_health_->publish_journal(
+            sze_health::kHealthDegraded, static_cast<std::uint32_t>(status),
+            recovery_stats_.journal_errors.load(std::memory_order_relaxed));
     }
 }
 
@@ -1110,6 +1280,19 @@ bool MDEngineSZE::publish_recovery_event(DecodedEvent* event)
         return false;
     }
     recovery_stats_.ring_events.fetch_add(1U, std::memory_order_relaxed);
+    if (recovery_sharded_rings_) {
+        if (!recovery_sharded_rings_->publish(
+                event->symbol_id, event->canonical, event->raw_record, 0, 0)) {
+            recovery_stats_.ring_errors.fetch_add(1U, std::memory_order_relaxed);
+            if (recovery_health_) {
+                recovery_health_->publish_ring(
+                    sze_health::kHealthDegraded,
+                    static_cast<std::uint32_t>(sze_recovery::kInvalidRingOverrun),
+                    recovery_stats_.ring_errors.load(std::memory_order_relaxed));
+            }
+            return false;
+        }
+    }
     return true;
 }
 
@@ -1130,6 +1313,28 @@ void MDEngineSZE::publish_recovery_metrics()
         recovery_journal_ ? recovery_journal_->flush_count() : 0U,
         recovery_journal_ ? recovery_journal_->published_offset() : 0U,
         recovery_journal_ ? recovery_journal_->flushed_offset() : 0U);
+    if (recovery_health_) {
+        const bool feed_invalid =
+            recovery_forced_invalid_.load(std::memory_order_acquire);
+        const sze_recovery::InvalidReason reason =
+            static_cast<sze_recovery::InvalidReason>(
+                recovery_invalid_reason_.load(std::memory_order_acquire));
+        recovery_health_->publish_feed(
+            feed_invalid ? sze_health::kHealthFailed : sze_health::kHealthHealthy,
+            reason, feed_invalid ? sze_health::kScopeGlobalFeed
+                                 : sze_health::kScopeNone,
+            0U, recovery_ring_->latest_event_id(),
+            recovery_latest_feed_sequence_.load(std::memory_order_acquire));
+        recovery_health_->publish_journal(
+            recovery_journal_degraded_.load(std::memory_order_acquire)
+                ? sze_health::kHealthDegraded : sze_health::kHealthHealthy,
+            0U, recovery_stats_.journal_errors.load(std::memory_order_relaxed));
+        recovery_health_->publish_ring(
+            recovery_stats_.ring_errors.load(std::memory_order_relaxed) == 0U
+                ? sze_health::kHealthHealthy : sze_health::kHealthDegraded,
+            0U, recovery_stats_.ring_errors.load(std::memory_order_relaxed));
+        recovery_health_->heartbeat();
+    }
 }
 
 void MDEngineSZE::worker_loop(std::size_t index)
@@ -1375,6 +1580,8 @@ void MDEngineSZE::worker_loop(std::size_t index)
                         record_size);
                     event.canonical.message_type = head.message_type;
                     event.canonical.record_kind = sze_recovery::kRecordMarketData;
+                    event.symbol_id = sze_health::parse_symbol_id(
+                        reinterpret_cast<const char*>(head.symbol));
                     if (recovery_config_.enabled &&
                         head.quote_update_time / 1000000000ULL !=
                         recovery_config_.trading_day) {

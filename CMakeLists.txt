@@ -59,7 +59,8 @@ set(SZE_COMMON_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/reference/snapshot_legacy15/snapshot_legacy15_factors.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/reference/snapshot_legacy15/snapshot_legacy15_model.cpp
   ${SZE_MD}/SZEProtocol.cpp
-  ${SZE_MD}/SZERecoverable.cpp)
+  ${SZE_MD}/SZERecoverable.cpp
+  ${SZE_MD}/SZEHealthState.cpp)
 
 set(SSE_COMMON_SOURCES ${SZE_COMMON_SOURCES})
 list(REMOVE_ITEM SSE_COMMON_SOURCES ${T0}/deepwin_strategy/sze_get_obj.cpp)
@@ -149,7 +150,9 @@ if(SZE_BUILD_TD)
 endif()
 
 add_library(sze_md SHARED
-  ${SZE_MD}/MDEngineSZE.cpp ${SZE_MD}/SZEProtocol.cpp ${SZE_MD}/SZERecoverable.cpp)
+  ${SZE_MD}/MDEngineSZE.cpp ${SZE_MD}/SZEProtocol.cpp
+  ${SZE_MD}/SZERecoverable.cpp ${SZE_MD}/SZEHealthState.cpp
+  ${SZE_MD}/SZEDirectShardedRing.cpp)
 target_include_directories(sze_md PRIVATE
   ${SZE_MD} ${DEEPWIN_INCLUDE} ${DEEPWIN_INCLUDE}/longfist
   ${BOOST_INCLUDE} ${PYTHON_INCLUDE})
@@ -204,6 +207,22 @@ target_include_directories(sze_recoverable_test PRIVATE ${SZE_MD})
 target_link_libraries(sze_recoverable_test PRIVATE pthread rt)
 target_compile_options(sze_recoverable_test PRIVATE -UNDEBUG)
 add_test(NAME sze_recoverable_test COMMAND sze_recoverable_test)
+
+add_executable(sze_health_state_test
+  ${SZE_MD}/tests/sze_health_state_test.cpp
+  ${SZE_MD}/SZEHealthState.cpp ${SZE_MD}/SZERecoverable.cpp)
+target_include_directories(sze_health_state_test PRIVATE ${SZE_MD})
+target_link_libraries(sze_health_state_test PRIVATE pthread rt)
+target_compile_options(sze_health_state_test PRIVATE -UNDEBUG)
+add_test(NAME sze_health_state_test COMMAND sze_health_state_test)
+
+add_executable(sze_direct_sharded_ring_test
+  ${SZE_MD}/tests/sze_direct_sharded_ring_test.cpp
+  ${SZE_MD}/SZEDirectShardedRing.cpp ${SZE_MD}/SZERecoverable.cpp)
+target_include_directories(sze_direct_sharded_ring_test PRIVATE ${SZE_MD})
+target_link_libraries(sze_direct_sharded_ring_test PRIVATE pthread rt)
+target_compile_options(sze_direct_sharded_ring_test PRIVATE -UNDEBUG)
+add_test(NAME sze_direct_sharded_ring_test COMMAND sze_direct_sharded_ring_test)
 
 add_executable(sze_protocol_test
   ${SZE_MD}/tests/sze_protocol_test.cpp ${SZE_MD}/SZEProtocol.cpp
@@ -269,9 +288,22 @@ target_include_directories(sze_prediction_arbiter_test PRIVATE ${T0})
 add_test(NAME sze_prediction_arbiter_test COMMAND sze_prediction_arbiter_test)
 
 add_executable(sze_recovery_status
-  ${SZE_MD}/tools/sze_recovery_status.cpp ${SZE_MD}/SZERecoverable.cpp)
+  ${SZE_MD}/tools/sze_recovery_status.cpp ${SZE_MD}/SZERecoverable.cpp
+  ${SZE_MD}/SZEHealthState.cpp)
 target_include_directories(sze_recovery_status PRIVATE ${SZE_MD})
 target_link_libraries(sze_recovery_status PRIVATE pthread rt)
+
+add_executable(sze_health_status
+  ${SZE_MD}/tools/sze_health_status.cpp
+  ${SZE_MD}/SZEHealthState.cpp ${SZE_MD}/SZERecoverable.cpp)
+target_include_directories(sze_health_status PRIVATE ${SZE_MD})
+target_link_libraries(sze_health_status PRIVATE pthread rt)
+
+add_executable(sze_sharded_ring_benchmark
+  ${SZE_MD}/tools/sze_sharded_ring_benchmark.cpp
+  ${SZE_MD}/SZEDirectShardedRing.cpp ${SZE_MD}/SZERecoverable.cpp)
+target_include_directories(sze_sharded_ring_benchmark PRIVATE ${SZE_MD})
+target_link_libraries(sze_sharded_ring_benchmark PRIVATE pthread rt)
 
 add_executable(sze_recovery_verify
   ${SZE_MD}/tools/sze_recovery_verify.cpp ${SZE_MD}/SZEProtocol.cpp

@@ -415,6 +415,7 @@ public:
     const ShmRingHeader* header() const { return header_; }
     std::uint64_t generation() const;
     std::uint64_t latest_event_id() const;
+    std::uint64_t latest_feed_sequence() const;
     ContinuityState continuity_state() const;
     ReadinessState readiness_state() const;
     std::size_t mapping_bytes() const { return mapping_bytes_; }
@@ -457,7 +458,8 @@ public:
     ~ReplayHandoffConsumer();
 
     bool open(const JournalConfig& journal_config,
-              const std::string& shm_path);
+              const std::string& shm_path,
+              bool publish_legacy_shared_readiness = true);
     void close();
     ReplayReadStatus next(CanonicalEvent* event,
                           void* payload,
@@ -472,6 +474,17 @@ public:
     std::uint64_t live_events() const { return live_events_; }
     std::uint64_t handoff_retries() const { return handoff_retries_; }
     std::uint64_t ring_overruns() const { return ring_overruns_; }
+    std::uint64_t generation() const { return generation_; }
+    std::uint64_t latest_event_id() const { return ring_.latest_event_id(); }
+    std::uint64_t latest_feed_sequence() const {
+        return ring_.latest_feed_sequence();
+    }
+    std::uint64_t replay_lag() const {
+        const std::uint64_t replay_event = next_event_id_ > 0U
+            ? next_event_id_ - 1U : 0U;
+        const std::uint64_t latest = ring_.latest_event_id();
+        return latest > replay_event ? latest - replay_event : 0U;
+    }
 
 private:
     ReplayReadStatus read_ring(CanonicalEvent* event,
@@ -489,6 +502,7 @@ private:
     std::uint64_t live_events_;
     std::uint64_t handoff_retries_;
     std::uint64_t ring_overruns_;
+    bool publish_legacy_shared_readiness_;
 };
 
 std::uint32_t crc32(const void* data, std::size_t bytes);

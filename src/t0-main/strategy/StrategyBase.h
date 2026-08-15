@@ -30,6 +30,7 @@
 
 #ifdef T0_SZE_STRATEGY_ONLY
 #include "SZERecoverable.h"
+#include "SZEHealthState.h"
 #include "sze_prediction_arbiter.h"
 #endif
 
@@ -140,6 +141,10 @@ private:
                                  const LFL2TradeField* data,
                                  short source,
                                  long rcv_time);
+#ifdef T0_SZE_STRATEGY_ONLY
+    void update_sze_book_health(const std::string& code,
+                                mix153060::Runtime* runtime);
+#endif
     void flush_mix153060_pending(const std::string& code,
                                  short source,
                                  long rcv_time);
@@ -233,6 +238,10 @@ private:
         int strategy_cpu = -1;
         bool allow_invalid_replay_for_analysis = false;
         bool trading_enabled = false;
+        bool health_state_enabled = false;
+        std::string health_state_path;
+        std::uint32_t shard_id = 0;
+        std::uint32_t shard_count = 1;
     };
 
     struct SzeTradingSignal {
@@ -317,6 +326,9 @@ private:
     bool mSzeRecoveryAnalysisMode = false;
     std::atomic<std::uint64_t> mSzeRecoveryEvents{0};
     std::atomic<std::uint64_t> mSzeRecoveryDecodeErrors{0};
+    std::uint64_t mSzeCurrentRecoveryEventId = 0U;
+    std::unique_ptr<sze_health::RecoveryShardHealthWriter>
+        mSzeRecoveryHealthWriter;
     std::thread mSzeRecoveryConsumerThread;
     std::thread mSzeTradingPollThread;
 #endif
