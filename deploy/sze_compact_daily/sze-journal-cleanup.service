@@ -1,0 +1,9 @@
+[Unit]
+Description=Remove Shenzhen journals older than three days
+After=sze-stop.service
+Requires=sze-stop.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/zane/run_main/cleanup_sze_journals.py --delete
+TimeoutStartSec=1800
