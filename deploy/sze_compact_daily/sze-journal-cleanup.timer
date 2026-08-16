@@ -1,0 +1,10 @@
+[Unit]
+Description=Clean old Shenzhen journals after market close
+
+[Timer]
+OnCalendar=*-*-* 15:10:00
+Persistent=false
+Unit=sze-journal-cleanup.service
+
+[Install]
+WantedBy=timers.target
