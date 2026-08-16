@@ -5,7 +5,6 @@
 #include "SZEProtocol.h"
 #include "SZERecoverable.h"
 #include "SZEHealthState.h"
-#include "SZEDirectShardedRing.h"
 
 #include <atomic>
 #include <cstddef>
@@ -94,7 +93,6 @@ private:
         std::uint32_t malformed_diagnostic_max_records = 1000;
         bool health_state_enabled = true;
         std::string health_state_path;
-        sze_sharded_ring::DirectShardedRingConfig direct_sharded_ring;
     };
 
     struct RecoveryStats
@@ -175,6 +173,7 @@ private:
     void mark_journal_degraded(const char* operation, int status);
     bool publish_recovery_event(DecodedEvent* event);
     void publish_recovery_metrics();
+    void reset_recovery_resources(bool clean_shutdown, bool remove_ipc);
     bool initialize_malformed_diagnostics();
     void close_malformed_diagnostics();
     void flush_malformed_diagnostics();
@@ -189,6 +188,8 @@ private:
                                 sze_md::DecodeFailureReason reason,
                                 bool invalidating);
     static bool replace_stale_ring(const std::string& path);
+    static bool unlink_owned_generation(const std::string& path,
+                                        std::uint64_t generation);
     static std::string normalize_symbol(const std::string& value);
     static std::string normalize_symbol(const char* value);
     static void copy_channel_json(const json& source, ChannelConfig* destination);
@@ -204,8 +205,6 @@ private:
     std::unique_ptr<sze_recovery::JournalWriter> recovery_journal_;
     std::unique_ptr<sze_recovery::ShmEventRing> recovery_ring_;
     std::unique_ptr<sze_health::CaptureHealthWriter> recovery_health_;
-    std::unique_ptr<sze_sharded_ring::DirectShardedRingProducer>
-        recovery_sharded_rings_;
     std::vector<sze_recovery::FeedSequenceTracker> continuity_trackers_;
     std::thread recovery_flush_worker_;
     int malformed_diagnostic_fd_ = -1;

@@ -165,29 +165,13 @@ def validate_system(system, validate_files):
     return shard_count, strategy_cpus, state_cpus
 
 
-def convert_legacy_daily(daily, day):
-    params = copy.deepcopy(require(daily, "ins_params", "daily"))
-    for item in params.values():
-        item.pop("cpu", None)
-        item.pop("last_position", None)
-    converted = {
-        "trading_day": int(require(daily, "trading_day", "daily")),
-        "static_data_source_date": int(daily.get("static_data_source_date", day)),
-        "static_data_hash": canonical_hash(params),
-        "ins_params": params,
-    }
-    return converted
-
-
-def validate_daily(daily, day, allow_legacy):
+def validate_daily(daily, day):
     keys = set(daily)
     if keys != DAILY_KEYS:
-        if not allow_legacy:
-            extra = sorted(keys - DAILY_KEYS)
-            missing = sorted(DAILY_KEYS - keys)
-            raise ConfigError("daily config must contain only {}; extra={} missing={}".format(
-                sorted(DAILY_KEYS), extra, missing))
-        daily = convert_legacy_daily(daily, day)
+        extra = sorted(keys - DAILY_KEYS)
+        missing = sorted(DAILY_KEYS - keys)
+        raise ConfigError("daily config must contain only {}; extra={} missing={}".format(
+            sorted(DAILY_KEYS), extra, missing))
     if int(daily["trading_day"]) != day:
         raise ConfigError("daily trading_day {} does not match {}".format(
             daily["trading_day"], day))
@@ -447,7 +431,6 @@ def main():
     parser.add_argument("--daily")
     parser.add_argument("--day", required=True, type=int)
     parser.add_argument("--runtime-root")
-    parser.add_argument("--allow-legacy-daily", action="store_true")
     parser.add_argument("--skip-file-validation", action="store_true")
     args = parser.parse_args()
 
@@ -461,8 +444,7 @@ def main():
     if args.component in ("strategy", "all", "validate", "validate-trade"):
         if not args.daily:
             raise ConfigError("--daily is required for {}".format(args.component))
-        daily = validate_daily(load_json(args.daily), args.day,
-                               args.allow_legacy_daily)
+        daily = validate_daily(load_json(args.daily), args.day)
     if args.component == "validate-system":
         print(json.dumps({"ok": True, "market": system["market"],
                           "daily_config_required": False},

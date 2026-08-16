@@ -65,8 +65,14 @@ daily config prevents prediction and trading.
 - Recovery/prediction wait in failed preflight and alert.
 - TD does not start and no order can be submitted.
 - A stale daily file is rejected even if `/home/zane/configs/current` points to it.
-- Legacy all-in-one daily files require the explicit temporary environment
-  variable `SZE_ALLOW_LEGACY_DAILY=1`; remove this escape hatch after migration.
+- Legacy all-in-one daily files are rejected by production preflight. Convert
+  them once on an offline machine:
+
+```bash
+python3 migrate_legacy_daily.py old_config.json \
+  config_sze_daily_YYYYMMDD.json \
+  --trading-day YYYYMMDD --source-date YYYYMMDD
+```
 
 ## Installation
 
@@ -75,6 +81,7 @@ Install fixed files once:
 ```bash
 install -m 0644 sze_system.json /home/zane/configs/general_config/sze_system.json
 install -m 0755 prepare_sze_runtime.py /home/zane/run_main/prepare_sze_runtime.py
+install -m 0755 migrate_legacy_daily.py /home/zane/run_main/migrate_legacy_daily.py
 install -m 0755 merge_sze_td_runtime.py /home/zane/run_main/merge_sze_td_runtime.py
 install -m 0755 run_sze_capture_daily.sh /home/zane/run_main/run_sze_capture_daily.sh
 install -m 0755 run_sze_recovery_launcher.sh /home/zane/run_main/run_sze_recovery_launcher.sh
@@ -97,6 +104,10 @@ ring prototype remains disabled until that separate validation is complete.
 The start coordinator waits for an atomic `recovery.ready` marker written only
 after every recovery worker survives its startup check; TD cannot race runtime
 generation.
+
+The direct sharded-ring prototype is not part of the production `libsze_md.so`.
+To build its standalone test/benchmark explicitly, configure with
+`-DSZE_BUILD_DIRECT_SHARDED_RING=ON`.
 
 ## Current HA boundary
 

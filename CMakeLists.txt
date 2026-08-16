@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(SZE_MARCH_NATIVE "Compile for the build machine CPU" OFF)
 option(SZE_BUILD_TD "Build the Shenzhen ATP TD plugin" OFF)
+option(SZE_BUILD_DIRECT_SHARDED_RING
+  "Build the experimental direct sharded-ring tests/benchmark" OFF)
 set(SZE_TD_API_DIR "${CMAKE_CURRENT_SOURCE_DIR}/modules/deepwin_guoxin/api" CACHE PATH
     "Directory containing ATP Quant API include/ and lib/")
 
@@ -151,8 +153,7 @@ endif()
 
 add_library(sze_md SHARED
   ${SZE_MD}/MDEngineSZE.cpp ${SZE_MD}/SZEProtocol.cpp
-  ${SZE_MD}/SZERecoverable.cpp ${SZE_MD}/SZEHealthState.cpp
-  ${SZE_MD}/SZEDirectShardedRing.cpp)
+  ${SZE_MD}/SZERecoverable.cpp ${SZE_MD}/SZEHealthState.cpp)
 target_include_directories(sze_md PRIVATE
   ${SZE_MD} ${DEEPWIN_INCLUDE} ${DEEPWIN_INCLUDE}/longfist
   ${BOOST_INCLUDE} ${PYTHON_INCLUDE})
@@ -216,13 +217,15 @@ target_link_libraries(sze_health_state_test PRIVATE pthread rt)
 target_compile_options(sze_health_state_test PRIVATE -UNDEBUG)
 add_test(NAME sze_health_state_test COMMAND sze_health_state_test)
 
-add_executable(sze_direct_sharded_ring_test
-  ${SZE_MD}/tests/sze_direct_sharded_ring_test.cpp
-  ${SZE_MD}/SZEDirectShardedRing.cpp ${SZE_MD}/SZERecoverable.cpp)
-target_include_directories(sze_direct_sharded_ring_test PRIVATE ${SZE_MD})
-target_link_libraries(sze_direct_sharded_ring_test PRIVATE pthread rt)
-target_compile_options(sze_direct_sharded_ring_test PRIVATE -UNDEBUG)
-add_test(NAME sze_direct_sharded_ring_test COMMAND sze_direct_sharded_ring_test)
+if(SZE_BUILD_DIRECT_SHARDED_RING)
+  add_executable(sze_direct_sharded_ring_test
+    ${SZE_MD}/tests/sze_direct_sharded_ring_test.cpp
+    ${SZE_MD}/SZEDirectShardedRing.cpp ${SZE_MD}/SZERecoverable.cpp)
+  target_include_directories(sze_direct_sharded_ring_test PRIVATE ${SZE_MD})
+  target_link_libraries(sze_direct_sharded_ring_test PRIVATE pthread rt)
+  target_compile_options(sze_direct_sharded_ring_test PRIVATE -UNDEBUG)
+  add_test(NAME sze_direct_sharded_ring_test COMMAND sze_direct_sharded_ring_test)
+endif()
 
 add_executable(sze_protocol_test
   ${SZE_MD}/tests/sze_protocol_test.cpp ${SZE_MD}/SZEProtocol.cpp
@@ -299,11 +302,13 @@ add_executable(sze_health_status
 target_include_directories(sze_health_status PRIVATE ${SZE_MD})
 target_link_libraries(sze_health_status PRIVATE pthread rt)
 
-add_executable(sze_sharded_ring_benchmark
-  ${SZE_MD}/tools/sze_sharded_ring_benchmark.cpp
-  ${SZE_MD}/SZEDirectShardedRing.cpp ${SZE_MD}/SZERecoverable.cpp)
-target_include_directories(sze_sharded_ring_benchmark PRIVATE ${SZE_MD})
-target_link_libraries(sze_sharded_ring_benchmark PRIVATE pthread rt)
+if(SZE_BUILD_DIRECT_SHARDED_RING)
+  add_executable(sze_sharded_ring_benchmark
+    ${SZE_MD}/tools/sze_sharded_ring_benchmark.cpp
+    ${SZE_MD}/SZEDirectShardedRing.cpp ${SZE_MD}/SZERecoverable.cpp)
+  target_include_directories(sze_sharded_ring_benchmark PRIVATE ${SZE_MD})
+  target_link_libraries(sze_sharded_ring_benchmark PRIVATE pthread rt)
+endif()
 
 add_executable(sze_recovery_verify
   ${SZE_MD}/tools/sze_recovery_verify.cpp ${SZE_MD}/SZEProtocol.cpp

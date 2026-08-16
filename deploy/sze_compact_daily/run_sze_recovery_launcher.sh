@@ -21,7 +21,6 @@ fi
 
 PREPARE_ARGS=(strategy --system "$SYSTEM_JSON" --daily "$DAILY_JSON"
   --day "$DAY" --runtime-root "$RUNTIME_ROOT")
-[[ "${SZE_ALLOW_LEGACY_DAILY:-0}" == "1" ]] && PREPARE_ARGS+=(--allow-legacy-daily)
 python3 "$PREPARE" "${PREPARE_ARGS[@]}"
 
 export TZ="${TZ:-Asia/Shanghai}"

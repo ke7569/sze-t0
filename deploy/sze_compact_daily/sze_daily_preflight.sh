@@ -20,18 +20,14 @@ case "$MODE" in
       DAILY_JSON="${ROOT}/configs/current"
     fi
     [[ -f "$DAILY_JSON" ]] || { echo "missing exact-date daily config: $DAILY_JSON" >&2; exit 1; }
-    PREPARE_ARGS=(validate --system "$SYSTEM_JSON" --daily "$DAILY_JSON" --day "$DAY")
-    [[ "${SZE_ALLOW_LEGACY_DAILY:-0}" == "1" ]] && PREPARE_ARGS+=(--allow-legacy-daily)
-    python3 "$PREPARE" "${PREPARE_ARGS[@]}"
+    python3 "$PREPARE" validate --system "$SYSTEM_JSON" --daily "$DAILY_JSON" --day "$DAY"
     ;;
   trade)
     if [[ ! -f "$DAILY_JSON" && -e "${ROOT}/configs/current" ]]; then
       DAILY_JSON="${ROOT}/configs/current"
     fi
     [[ -f "$DAILY_JSON" ]] || { echo "missing exact-date daily config: $DAILY_JSON" >&2; exit 1; }
-    PREPARE_ARGS=(validate-trade --system "$SYSTEM_JSON" --daily "$DAILY_JSON" --day "$DAY")
-    [[ "${SZE_ALLOW_LEGACY_DAILY:-0}" == "1" ]] && PREPARE_ARGS+=(--allow-legacy-daily)
-    python3 "$PREPARE" "${PREPARE_ARGS[@]}"
+    python3 "$PREPARE" validate-trade --system "$SYSTEM_JSON" --daily "$DAILY_JSON" --day "$DAY"
     ;;
   *)
     echo "usage: $0 capture|strategy|trade [DAILY_JSON]" >&2

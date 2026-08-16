@@ -19,6 +19,10 @@ TD_SPEC = importlib.util.spec_from_file_location(
     "merge_sze_td_runtime", os.path.join(HERE, "merge_sze_td_runtime.py"))
 TD_RUNTIME = importlib.util.module_from_spec(TD_SPEC)
 TD_SPEC.loader.exec_module(TD_RUNTIME)
+MIGRATE_SPEC = importlib.util.spec_from_file_location(
+    "migrate_legacy_daily", os.path.join(HERE, "migrate_legacy_daily.py"))
+MIGRATE = importlib.util.module_from_spec(MIGRATE_SPEC)
+MIGRATE_SPEC.loader.exec_module(MIGRATE)
 
 
 class RuntimeConfigTest(unittest.TestCase):
@@ -57,7 +61,7 @@ class RuntimeConfigTest(unittest.TestCase):
         self.assertEqual(20260817, pipeline["trading_day"])
 
     def test_valid_daily_generates_stable_shards_and_trade(self):
-        daily = RUNTIME.validate_daily(copy.deepcopy(self.daily), 20260817, False)
+        daily = RUNTIME.validate_daily(copy.deepcopy(self.daily), 20260817)
         output = os.path.join(self.temp, "strategy")
         RUNTIME.strategy_configs(self.system, daily, 20260817, output)
         manifest = RUNTIME.load_json(os.path.join(output, "manifest.json"))
@@ -79,20 +83,20 @@ class RuntimeConfigTest(unittest.TestCase):
 
     def test_stale_day_is_rejected(self):
         with self.assertRaises(RUNTIME.ConfigError):
-            RUNTIME.validate_daily(copy.deepcopy(self.daily), 20260818, False)
+            RUNTIME.validate_daily(copy.deepcopy(self.daily), 20260818)
 
     def test_static_hash_mismatch_is_rejected(self):
         daily = copy.deepcopy(self.daily)
         daily["ins_params"]["000001.SZ"]["static_position"] = 0
         with self.assertRaises(RUNTIME.ConfigError):
-            RUNTIME.validate_daily(daily, 20260817, False)
+            RUNTIME.validate_daily(daily, 20260817)
 
     def test_invalid_symbol_is_rejected(self):
         daily = copy.deepcopy(self.daily)
         daily["ins_params"]["000001"] = daily["ins_params"].pop("000001.SZ")
         daily["static_data_hash"] = RUNTIME.canonical_hash(daily["ins_params"])
         with self.assertRaises(RUNTIME.ConfigError):
-            RUNTIME.validate_daily(daily, 20260817, False)
+            RUNTIME.validate_daily(daily, 20260817)
 
     def test_daily_cpu_and_last_position_are_rejected(self):
         for field in ("cpu", "last_position"):
@@ -100,7 +104,7 @@ class RuntimeConfigTest(unittest.TestCase):
             daily["ins_params"]["000001.SZ"][field] = 1
             daily["static_data_hash"] = RUNTIME.canonical_hash(daily["ins_params"])
             with self.assertRaises(RUNTIME.ConfigError):
-                RUNTIME.validate_daily(daily, 20260817, False)
+                RUNTIME.validate_daily(daily, 20260817)
 
     def test_duplicate_json_key_is_rejected(self):
         path = os.path.join(self.temp, "duplicate.json")
@@ -109,17 +113,29 @@ class RuntimeConfigTest(unittest.TestCase):
         with self.assertRaises(RUNTIME.ConfigError):
             RUNTIME.load_json(path)
 
-    def test_legacy_requires_explicit_override(self):
+    def test_legacy_daily_is_rejected(self):
         legacy = copy.deepcopy(self.daily)
         legacy["worker_count"] = 8
         legacy["ins_params"]["000001.SZ"]["cpu"] = 16
         legacy["ins_params"]["000001.SZ"]["last_position"] = 0
         with self.assertRaises(RUNTIME.ConfigError):
-            RUNTIME.validate_daily(copy.deepcopy(legacy), 20260817, False)
-        converted = RUNTIME.validate_daily(legacy, 20260817, True)
+            RUNTIME.validate_daily(copy.deepcopy(legacy), 20260817)
+        with self.assertRaises(RUNTIME.ConfigError):
+            RUNTIME.validate_daily(legacy, 20260817)
+
+    def test_legacy_migration_produces_strict_daily_hash(self):
+        legacy = copy.deepcopy(self.daily)
+        legacy["worker_count"] = 8
+        legacy["ins_params"]["000001.SZ"]["cpu"] = 16
+        legacy["ins_params"]["000001.SZ"]["last_position"] = 0
+        converted = MIGRATE.convert(legacy, 20260817, 20260816)
         self.assertEqual(set(converted), RUNTIME.DAILY_KEYS)
+        self.assertEqual(
+            converted["static_data_hash"],
+            RUNTIME.canonical_hash(converted["ins_params"]))
         self.assertNotIn("cpu", converted["ins_params"]["000001.SZ"])
         self.assertNotIn("last_position", converted["ins_params"]["000001.SZ"])
+        RUNTIME.validate_daily(converted, 20260817)
 
     def test_credentials_permissions_are_enforced(self):
         path = self.system["trade"]["credentials_path"]
@@ -130,7 +146,7 @@ class RuntimeConfigTest(unittest.TestCase):
     def test_bad_credentials_do_not_block_prediction_validation(self):
         os.chmod(self.system["trade"]["credentials_path"], 0o644)
         RUNTIME.validate_system(self.system, True)
-        RUNTIME.validate_daily(copy.deepcopy(self.daily), 20260817, False)
+        RUNTIME.validate_daily(copy.deepcopy(self.daily), 20260817)
 
     def test_td_cpu_plan_overrides_private_values(self):
         base = os.path.join(self.temp, "deepwin.json")
