@@ -31,6 +31,23 @@ SSE and SZE factors are separate contracts. SSE v0.4 consumes the ordered 50
 factors in `sse-t0/model/factors.txt`; SZE continues to use its own factor
 engine/model. The old generic `SsePredictor` path is not the SSE v0.4 runtime.
 
+Within SSE, Snapshot and tick factors are also separate contracts and event
+streams. Opening Snapshot rows feed the 36/95 dimensional dual-GRU ensemble;
+strict `>100us` CompleteOrderBookSH batch-end rows feed the 50-factor tick GRU.
+Both advance independent per-stock/day hidden states. The output selector uses
+exchange event time: Snapshot for `[09:30,09:35)`, tick from exactly 09:35.
+The selector does not transform factors or provide cross-model fallback.
+
+The live `>100us` rule is implemented by
+`sse-t0/market_data/sse_batch_end_sampler.*` as a trailing-edge one-shot state
+machine. Every normalized SSE update rearms an absolute `CLOCK_MONOTONIC`
+deadline; a batch closes only after a strictly greater gap. The two-phase API
+closes an expired old batch before the next event mutates the reconstructed
+book, so timer scheduling latency cannot mix two batches. Only the final
+CompleteOrderBookSH candidate per dirty instrument is emitted, and the normal
+turnover/100-second/mid-change gate still applies before factor generation.
+Sequence gaps discard the pending batch and require explicit recovery.
+
 ## Rollout boundary
 
 - Tomorrow: run the raw observer and decoder in offline/loopback mode, then move

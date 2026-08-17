@@ -17,9 +17,10 @@ IWCStrategy* get_obj(kungfu::yijinjing::IControlCenter* cc, const std::string& c
     if (!file2json(path, config)) return nullptr;
     std::string error; if (!sse_strategy_library::validate_config(config, &error)) { std::cerr << "[sse_get_obj] " << error << '\n'; return nullptr; }
     // The old StrategyBase->SsePredictor path consumes a different factor ABI
-    // and a different checkpoint format. Keep the exported ABI available, but
-    // refuse to start it until the native SSE 50-factor pipeline is wired.
+    // and checkpoint format. Native hybrid inference and the SSE >100us batch
+    // sampler are ready, but the target-host vendor decoder and frozen factor
+    // adapters are not yet wired into HStrategy.
     (void)cc;
-    std::cerr << "[sse_get_obj] SSE strategy scaffold is offline-only; native SSE factor pipeline is not wired" << '\n';
+    std::cerr << "[sse_get_obj] connect the target-host SSE decoder and frozen Snapshot/tick factor adapters before prediction" << '\n';
     return nullptr;
 }

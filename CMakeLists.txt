@@ -249,7 +249,8 @@ add_executable(sse_config_guard_test
   ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/tests/sse_config_guard_test.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/strategy/sse_config_guard.cpp)
 target_include_directories(sse_config_guard_test PRIVATE ${T0})
-add_test(NAME sse_config_guard_test COMMAND sse_config_guard_test)
+add_test(NAME sse_config_guard_test COMMAND sse_config_guard_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/config/config_sse_hybrid_prediction_20260818.json)
 
 add_library(deepwin_market_data_runtime STATIC
   ${SZE_MD}/common/UdpChannelRuntime.cpp)
@@ -260,6 +261,18 @@ target_link_libraries(deepwin_market_data_runtime PUBLIC pthread)
 add_executable(sse_udp_observer
   ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/market_observer/sse_udp_observer.cpp)
 target_link_libraries(sse_udp_observer PRIVATE deepwin_market_data_runtime)
+
+add_library(sse_live_sampling STATIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/market_data/sse_batch_end_sampler.cpp)
+target_include_directories(sse_live_sampling PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/market_data)
+target_link_libraries(sse_live_sampling PUBLIC rt)
+
+add_executable(sse_live_sampling_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/market_data/sse_batch_end_sampler_test.cpp)
+target_link_libraries(sse_live_sampling_test PRIVATE sse_live_sampling)
+target_compile_options(sse_live_sampling_test PRIVATE -UNDEBUG)
+add_test(NAME sse_live_sampling_test COMMAND sse_live_sampling_test)
 
 add_library(sse_model_runtime STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model/sse_model_runtime.cpp)
@@ -276,6 +289,35 @@ add_test(NAME sse_model_runtime_test COMMAND sse_model_runtime_test)
 add_executable(sse_model_sequence_probe
   ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model/sse_model_sequence_probe.cpp)
 target_link_libraries(sse_model_sequence_probe PRIVATE sse_model_runtime)
+
+add_library(sse_snapshot_gru_runtime STATIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model/snapshot_gru_runtime.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model/snapshot_ensemble.cpp)
+target_include_directories(sse_snapshot_gru_runtime PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model
+  ${T0} ${T0}/cpp_model)
+target_compile_options(sse_snapshot_gru_runtime PRIVATE -ffp-contract=off)
+
+add_executable(sse_snapshot_gru_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model/snapshot_gru_test.cpp)
+target_link_libraries(sse_snapshot_gru_test PRIVATE sse_snapshot_gru_runtime)
+target_compile_options(sse_snapshot_gru_test PRIVATE -UNDEBUG)
+add_test(NAME sse_snapshot_gru_test COMMAND sse_snapshot_gru_test)
+
+add_library(sse_hybrid_model_runtime STATIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model/sse_hybrid_model.cpp)
+target_include_directories(sse_hybrid_model_runtime PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model
+  ${T0} ${T0}/cpp_model)
+target_link_libraries(sse_hybrid_model_runtime PUBLIC
+  sse_model_runtime sse_snapshot_gru_runtime)
+target_compile_options(sse_hybrid_model_runtime PRIVATE -ffp-contract=off)
+
+add_executable(sse_hybrid_model_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/model/sse_hybrid_model_test.cpp)
+target_link_libraries(sse_hybrid_model_test PRIVATE sse_hybrid_model_runtime)
+target_compile_options(sse_hybrid_model_test PRIVATE -UNDEBUG)
+add_test(NAME sse_hybrid_model_test COMMAND sse_hybrid_model_test)
 
 add_executable(sse_udp_observer_test
   ${CMAKE_CURRENT_SOURCE_DIR}/sse-t0/market_observer/sse_udp_observer_test.cpp)

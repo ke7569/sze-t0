@@ -30,3 +30,18 @@ inputs to this model and are intentionally not used by the native runtime.
 The SSE strategy factory is currently fail-closed for the same reason: the
 offline observer and native model can be validated independently, while the
 event-to-factor replay is still being built.
+
+## SSE opening Snapshot GRU handoff
+
+The separate 2026-08-17 Snapshot handoff is implemented in
+`snapshot_gru_runtime.*` and `snapshot_ensemble.*`. It uses a 36-factor
+baseline arm and a 95-factor Snapshot+Auction59 arm; see `SNAPSHOT_GRU.md` and
+the two `sse_snapshot_gru_*.json` contracts. This profile is independent of
+the 50-factor v0.4 runtime above and is also fail-closed until the SSE factor
+adapter is connected.
+
+`sse_hybrid_model.*` now combines the two independent event streams without
+mixing their factor ABIs. Tick predictions are generated from the opening but
+remain shadow outputs before 09:35; Snapshot ensemble predictions are selected
+for `[09:30,09:35)`, and the already-warm tick model is selected at 09:35 and
+later. See `SSE_HYBRID_MODEL.md`.

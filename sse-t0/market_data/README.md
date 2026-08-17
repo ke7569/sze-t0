@@ -24,6 +24,12 @@ UdpChannelRuntime -> SSE decoder -> SSE 50-factor engine -> native SSE model
                   -> SZE decoder -> SZE factor engine -> existing SZE model
 ```
 
+SSE live batching is intentionally above this shared socket layer. Link the
+`sse_live_sampling` target and follow `LIVE_SAMPLING.md` after the SSE decoder
+has serialized a logical feed lane. Do not add the 100us policy to
+`UdpChannelRuntime`: it would change SZE behavior and cannot reason about SSE
+sequence recovery or CompleteOrderBookSH candidates.
+
 The current SZE receivers in `modules/deepwin_guoxin/md/MDEngineSZE.cpp` and
 `MDEngineSZEL1.cpp` are still production SZE-specific adapters. They have not
 been changed in this offline phase. When the feed migration is approved, their

@@ -1,0 +1,46 @@
+{
+  "market": "SH",
+  "source": 89,
+  "site": "dongguan",
+  "interface": "SET_AT_DEPLOYMENT",
+  "credentials": "INJECT_AT_DEPLOYMENT",
+  "kernel_receive_timestamp": true,
+  "monotonic_receive_timestamp": true,
+  "channels": [
+    {
+      "name": "snapshot_dongguan",
+      "kind": "snapshot",
+      "group": "239.57.80.5",
+      "port": 37105,
+      "enabled": true
+    },
+    {
+      "name": "tick_dongguan",
+      "kind": "tick",
+      "group": "239.57.80.9",
+      "port": 37109,
+      "enabled": true
+    },
+    {
+      "name": "index_dongguan",
+      "kind": "index",
+      "group": "239.57.80.2",
+      "port": 37102,
+      "enabled": false
+    },
+    {
+      "name": "lv1_dongguan",
+      "kind": "lv1",
+      "group": "239.57.80.10",
+      "port": 37110,
+      "enabled": false
+    }
+  ],
+  "batch_sampling": {
+    "owner": "sse-decoder-factor-adapter",
+    "threshold_ns": 100000,
+    "comparison": "strict-greater-than",
+    "timer": "CLOCK_MONOTONIC-one-shot",
+    "periodic_publish": false
+  }
+}
