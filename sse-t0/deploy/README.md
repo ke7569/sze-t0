@@ -86,6 +86,39 @@ thresholds for the decoded SSE universe. `production_approval` remains false.
 The live adapter must follow `sse-t0/market_data/LIVE_SAMPLING.md`. A fixed
 100us periodic publisher is not contract-compatible.
 
+## Shanghai ATP TD plugin
+
+The repository can build the Shanghai ATP adapter from the shared Guoxin ATP
+source with the exchange-specific identity below:
+
+```bash
+cmake -S . -B src/t0-main/build/sse-td \
+  -DSSE_BUILD_TD=ON -DSZE_BUILD_TD=OFF \
+  -DSZE_TD_API_DIR=/path/to/modules/deepwin_guoxin/api \
+  -DRUNTIME=/path/to/runtime_so -DCMAKE_BUILD_TYPE=Release
+cmake --build src/t0-main/build/sse-td --target sse_td -j2
+```
+
+This produces `libsse_td.so` with source id `190`, engine key `sse_td`, and
+ATP market id `101` (SSE). It is the same ATP adapter source used for the SZE
+plugin, with the market resolver mapping `SSE`/`SH` to market 101; do not
+rename `libsze_td.so` and treat it as a Shanghai binary.
+
+The query-test template is `sse-t0/config/sse_td_query.example.json`. It keeps
+`startup_cancel_all_orders=false`. Replace both IX endpoints and all account
+fields independently. In particular, `cust_id`, `fund_account_id`, and
+`account_id` are different fields and must not be filled by copying one value
+without vendor confirmation. The supplied server document contains network
+and machine information but does not contain these two IX IPs or the account
+credentials, so this repository intentionally leaves them as placeholders.
+For a TD-only query process with no strategy loaded, use
+`sse-t0/config/main_sse_td_query.example.conf`.
+
+The transfer directory
+`src/t0-main/build/configs/sse-deepwin-deps-20260819/` contains the ATP headers,
+`libsse_td.so`, and the Python 3.6/Boost 1.62/ZMQ/log4cplus/Deepwin runtime
+libraries. Verify its `SHA256SUMS` before copying it to the target host.
+
 ## Snapshot GRU model package
 
 The handoff's SSE opening model is packaged separately from the raw capture

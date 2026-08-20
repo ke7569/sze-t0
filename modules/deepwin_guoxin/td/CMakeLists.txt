@@ -35,3 +35,5 @@ function(add_guoxin_td_engine target output_name source_id engine_key default_ma
 endfunction()
 
 add_guoxin_td_engine(sze_td sze_td 180 sze_td 102)
+add_guoxin_td_engine(sse_td sse_td 190 sse_td 101)
+target_compile_definitions(sse_td PRIVATE SSE_TD_BUILD=1)

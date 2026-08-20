@@ -1,0 +1,41 @@
+{
+  "td": {
+    "sse_td": {
+      "BrokerId": "REPLACE_WITH_VENDOR_BROKER_ID",
+      "UserId": "REPLACE_WITH_VENDOR_USER_ID",
+      "InvestorId": "REPLACE_WITH_CUST_ID_OR_VENDOR_INVESTOR_ID",
+      "Password": "REPLACE_WITH_VENDOR_LOGIN_PASSWORD",
+      "cust_id": "REPLACE_WITH_CUST_ID",
+      "fund_account_id": "REPLACE_WITH_FUND_ACCOUNT_ID",
+      "branch_id": "REPLACE_WITH_BRANCH_ID",
+      "account_id": "REPLACE_WITH_SECURITIES_ACCOUNT_ID",
+      "trade_password": "REPLACE_WITH_TRADING_PASSWORD",
+      "agw_user": "REPLACE_WITH_AGW_USER",
+      "agw_password": "REPLACE_WITH_AGW_PASSWORD",
+      "order_way": "N",
+      "client_feature_code": "REPLACE_WITH_MACHINE_FEATURE_CODE",
+      "bind_ip_address": "REPLACE_WITH_TRADING_NIC_IP",
+      "locations": [
+        "REPLACE_PRIMARY_SSE_IX_IP:32002",
+        "REPLACE_BACKUP_SSE_IX_IP:32002"
+      ],
+      "market_id": 101,
+      "business_type": 1,
+      "return_num": 100,
+      "receive_thread_cpu": 255,
+      "send_thread_cpu": 255,
+      "is_tcp_direct": false,
+      "enable_latency": true,
+      "bypass_account_queries": false,
+      "enable_position_sync": true,
+      "startup_cancel_all_orders": false,
+      "position_sync_interval_sec": 5,
+      "log_level": 4,
+      "api_log_dir": "./logs/sse_td"
+    }
+  },
+  "paths": {
+    "log_dir": "./logs/sse_td"
+  },
+  "deployment_note": "Do not start until the vendor supplies both IX IPs, credentials, client feature code, fund_account_id, and account_id. All five identity fields are intentionally independent; cust_id must not be copied into the other fields."
+}
